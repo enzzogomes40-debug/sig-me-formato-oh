@@ -14,10 +14,42 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from decimal import Decimal
 
+# =============================================================================
+# CONFIGURAÇÕES PARA PYTHONANYWHERE
+# =============================================================================
+import sys
+
+# Configuração para PythonAnywhere
+if 'PYTHONANYWHERE_DOMAIN' in os.environ:
+    # Desativa debug no ambiente de produção
+    DEBUG = False
+    # Configurações específicas para PythonAnywhere
+    MYSQL_HOST = 'enzzodril.mysql.pythonanywhere-services.com'
+    MYSQL_DATABASE = 'enzzodril$default'
+    MYSQL_USER = 'enzzodril'
+    MYSQL_PASSWORD = '123formato'
+else:
+    # Configurações para desenvolvimento local
+    DEBUG = True
+    MYSQL_HOST = 'localhost'
+    MYSQL_DATABASE = 'sig_me_db'
+    MYSQL_USER = 'root'
+    MYSQL_PASSWORD = '123456'
+
 # CONFIGURAR LOGGING
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 app = Flask(__name__)
 app.secret_key = 'sig-me-chave-secreta-2024'
+
+# Configuração do app para PythonAnywhere
+if 'PYTHONANYWHERE_DOMAIN' in os.environ:
+    app.config.update(
+        DEBUG=False,
+        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE='Lax',
+        PERMANENT_SESSION_LIFETIME=3600
+    )
 
 # CORES DO SITE FORMATO OH
 CORES_FORMATO = {
@@ -38,10 +70,10 @@ CORES_FORMATO = {
 # =============================================================================
 class DatabaseConnection:
     def __init__(self):
-        self.host = 'localhost'
-        self.database = 'sig_me_db'
-        self.user = 'root'
-        self.password = '123456'
+        self.host = MYSQL_HOST
+        self.database = MYSQL_DATABASE
+        self.user = MYSQL_USER
+        self.password = MYSQL_PASSWORD
         self.connection = None
 
     def connect(self, create_database=False):
@@ -323,7 +355,7 @@ def inicializar_database():
                 ('receita', 'Locação Placa 44-2 - Rede Farmácias', 3200.00, 'Locação Placas', '2024-03-05', '2024-03-05', 'pago', 2, None, 'Pagamento recebido'),
                 ('receita', 'Locação Placa 141 - Banco Nacional', 2800.00, 'Locação Placas', '2024-03-10', '2024-03-10', 'pago', 3, None, 'Pagamento recebido'),
                 ('receita', 'Locação Placa 142 - Supermercado', 2200.00, 'Locação Placas', '2024-03-15', '2024-03-15', 'pendente', None, None, 'Aguardando pagamento'),
-                
+
                 # Despesas
                 ('despesa', 'Manutenção Placa 145', 450.00, 'Manutenção', '2024-03-02', '2024-03-02', 'pago', None, 3, 'Manutenção preventiva'),
                 ('despesa', 'Aluguel Escritório', 1200.00, 'Despesas Operacionais', '2024-03-05', '2024-03-05', 'pago', None, None, 'Aluguel mensal'),
@@ -485,6 +517,7 @@ def login():
                 'nome': 'Usuário Teste',
                 'perfil': 'Administrador'
             }
+            session.permanent = True
             return redirect('/inventario')
         else:
             return '''
@@ -548,7 +581,7 @@ def logout():
     return redirect('/login')
 
 # =============================================================================
-# MÓDULO DE INVENTÁRIO (CORRIGIDO)
+# MÓDULO DE INVENTÁRIO (COMPLETO)
 # =============================================================================
 @app.route('/inventario')
 def inventario():
@@ -1586,8 +1619,8 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
 
         function excluirPlaca(codigo) {{
             if (confirm('Tem certeza que deseja excluir a placa ' + codigo + '?')) {{
-                fetch('/inventario/placa/excluir/' + codigo, {{ 
-                    method: 'DELETE' 
+                fetch('/inventario/placa/excluir/' + codigo, {{
+                    method: 'DELETE'
                 }})
                 .then(response => response.json())
                 .then(data => {{
@@ -3241,52 +3274,70 @@ def exportar_inventario():
     if 'user' not in session:
         return redirect('/login')
 
-    db = DatabaseConnection()
-    placas = db.execute_query("""
-        SELECT Codigo_Ativo, Endereco, Regiao, Tipo_Placa, Status_Atual,
-               Cliente_Locacao, Valor_Mensal, Data_Cadastro
-        FROM placas
-        ORDER BY Regiao, Codigo_Ativo
-    """) or []
+    try:
+        db = DatabaseConnection()
+        placas = db.execute_query("""
+            SELECT Codigo_Ativo, Endereco, Regiao, Tipo_Placa, Status_Atual,
+                   Cliente_Locacao, Valor_Mensal, Data_Cadastro
+            FROM placas
+            ORDER BY Regiao, Codigo_Ativo
+        """) or []
 
-    # Criar um workbook e adicionar uma planilha
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Inventário"
+        # Criar um workbook e adicionar uma planilha
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Inventário"
 
-    # Cabeçalhos
-    headers = ["Código", "Endereço", "Região", "Tipo", "Status", "Cliente", "Valor Mensal", "Data Cadastro"]
-    ws.append(headers)
+        # Cabeçalhos
+        headers = ["Código", "Endereço", "Região", "Tipo", "Status", "Cliente", "Valor Mensal", "Data Cadastro"]
+        ws.append(headers)
 
-    # Adicionar dados
-    for placa in placas:
-        ws.append([
-            placa['Codigo_Ativo'],
-            placa['Endereco'],
-            placa['Regiao'],
-            placa['Tipo_Placa'],
-            placa['Status_Atual'],
-            placa['Cliente_Locacao'] or "Sem locação",
-            placa['Valor_Mensal'],
-            placa['Data_Cadastro']
-        ])
+        # Adicionar dados
+        for placa in placas:
+            ws.append([
+                placa['Codigo_Ativo'],
+                placa['Endereco'],
+                placa['Regiao'],
+                placa['Tipo_Placa'],
+                placa['Status_Atual'],
+                placa['Cliente_Locacao'] or "Sem locação",
+                placa['Valor_Mensal'],
+                placa['Data_Cadastro']
+            ])
 
-    # Formatação
-    for cell in ws[1]:
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill(start_color=CORES_FORMATO['primaria'], end_color=CORES_FORMATO['primaria'], fill_type="solid")
+        # Formatação
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color=CORES_FORMATO['primaria'], end_color=CORES_FORMATO['primaria'], fill_type="solid")
 
-    # Salvar em um buffer
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    buffer.seek(0)
+        # Ajustar largura das colunas
+        for column in ws.columns:
+            max_length = 0
+            column_letter = get_column_letter(column[0].column)
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
 
-    return send_file(
-        buffer,
-        as_attachment=True,
-        download_name='inventario_sigme.xlsx',
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
+        # Salvar em um buffer
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=f'inventario_sigme_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+    except Exception as e:
+        logging.error(f"❌ Erro ao exportar inventário: {e}")
+        return "Erro ao exportar dados", 500
 
 @app.route('/exportar/clientes')
 def exportar_clientes():
@@ -3294,49 +3345,67 @@ def exportar_clientes():
     if 'user' not in session:
         return redirect('/login')
 
-    db = DatabaseConnection()
-    clientes = db.execute_query("""
-        SELECT Nome_Fantasia, Nome_Razao_Social, CNPJ_CPF, Telefone, Email, created_at
-        FROM clientes
-        ORDER BY Nome_Fantasia
-    """) or []
+    try:
+        db = DatabaseConnection()
+        clientes = db.execute_query("""
+            SELECT Nome_Fantasia, Nome_Razao_Social, CNPJ_CPF, Telefone, Email, created_at
+            FROM clientes
+            ORDER BY Nome_Fantasia
+        """) or []
 
-    # Criar um workbook e adicionar uma planilha
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Clientes"
+        # Criar um workbook e adicionar uma planilha
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Clientes"
 
-    # Cabeçalhos
-    headers = ["Nome Fantasia", "Razão Social", "CNPJ/CPF", "Telefone", "Email", "Data Cadastro"]
-    ws.append(headers)
+        # Cabeçalhos
+        headers = ["Nome Fantasia", "Razão Social", "CNPJ/CPF", "Telefone", "Email", "Data Cadastro"]
+        ws.append(headers)
 
-    # Adicionar dados
-    for cliente in clientes:
-        ws.append([
-            cliente['Nome_Fantasia'],
-            cliente['Nome_Razao_Social'],
-            cliente['CNPJ_CPF'],
-            cliente['Telefone'],
-            cliente['Email'],
-            cliente['created_at']
-        ])
+        # Adicionar dados
+        for cliente in clientes:
+            ws.append([
+                cliente['Nome_Fantasia'],
+                cliente['Nome_Razao_Social'],
+                cliente['CNPJ_CPF'],
+                cliente['Telefone'],
+                cliente['Email'],
+                cliente['created_at']
+            ])
 
-    # Formatação
-    for cell in ws[1]:
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill(start_color=CORES_FORMATO['primaria'], end_color=CORES_FORMATO['primaria'], fill_type="solid")
+        # Formatação
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color=CORES_FORMATO['primaria'], end_color=CORES_FORMATO['primaria'], fill_type="solid")
 
-    # Salvar em um buffer
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    buffer.seek(0)
+        # Ajustar largura das colunas
+        for column in ws.columns:
+            max_length = 0
+            column_letter = get_column_letter(column[0].column)
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
 
-    return send_file(
-        buffer,
-        as_attachment=True,
-        download_name='clientes_sigme.xlsx',
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
+        # Salvar em um buffer
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=f'clientes_sigme_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+    except Exception as e:
+        logging.error(f"❌ Erro ao exportar clientes: {e}")
+        return "Erro ao exportar dados", 500
 
 @app.route('/exportar/contratos')
 def exportar_contratos():
@@ -3344,59 +3413,77 @@ def exportar_contratos():
     if 'user' not in session:
         return redirect('/login')
 
-    db = DatabaseConnection()
-    contratos = db.execute_query("""
-        SELECT tipo, cliente_id, fornecedor_id, descricao, valor_mensal,
-               data_inicio, data_fim, status, observacoes, arquivo_pdf, created_at
-        FROM contratos
-        ORDER BY data_inicio DESC
-    """) or []
+    try:
+        db = DatabaseConnection()
+        contratos = db.execute_query("""
+            SELECT tipo, cliente_id, fornecedor_id, descricao, valor_mensal,
+                   data_inicio, data_fim, status, observacoes, arquivo_pdf, created_at
+            FROM contratos
+            ORDER BY data_inicio DESC
+        """) or []
 
-    # Criar um workbook e adicionar uma planilha
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Contratos"
+        # Criar um workbook e adicionar uma planilha
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Contratos"
 
-    # Cabeçalhos
-    headers = ["Tipo", "Cliente ID", "Fornecedor ID", "Descrição", "Valor Mensal",
-               "Data Início", "Data Fim", "Status", "Observações", "Arquivo PDF", "Data Cadastro"]
-    ws.append(headers)
+        # Cabeçalhos
+        headers = ["Tipo", "Cliente ID", "Fornecedor ID", "Descrição", "Valor Mensal",
+                   "Data Início", "Data Fim", "Status", "Observações", "Arquivo PDF", "Data Cadastro"]
+        ws.append(headers)
 
-    # Adicionar dados
-    for contrato in contratos:
-        ws.append([
-            contrato['tipo'],
-            contrato['cliente_id'],
-            contrato['fornecedor_id'],
-            contrato['descricao'],
-            contrato['valor_mensal'],
-            contrato['data_inicio'],
-            contrato['data_fim'],
-            contrato['status'],
-            contrato['observacoes'],
-            contrato['arquivo_pdf'],
-            contrato['created_at']
-        ])
+        # Adicionar dados
+        for contrato in contratos:
+            ws.append([
+                contrato['tipo'],
+                contrato['cliente_id'],
+                contrato['fornecedor_id'],
+                contrato['descricao'],
+                contrato['valor_mensal'],
+                contrato['data_inicio'],
+                contrato['data_fim'],
+                contrato['status'],
+                contrato['observacoes'],
+                contrato['arquivo_pdf'],
+                contrato['created_at']
+            ])
 
-    # Formatação
-    for cell in ws[1]:
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = PatternFill(start_color=CORES_FORMATO['primaria'], end_color=CORES_FORMATO['primaria'], fill_type="solid")
+        # Formatação
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color=CORES_FORMATO['primaria'], end_color=CORES_FORMATO['primaria'], fill_type="solid")
 
-    # Salvar em um buffer
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    buffer.seek(0)
+        # Ajustar largura das colunas
+        for column in ws.columns:
+            max_length = 0
+            column_letter = get_column_letter(column[0].column)
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
 
-    return send_file(
-        buffer,
-        as_attachment=True,
-        download_name='contratos_sigme.xlsx',
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
+        # Salvar em um buffer
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=f'contratos_sigme_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+    except Exception as e:
+        logging.error(f"❌ Erro ao exportar contratos: {e}")
+        return "Erro ao exportar dados", 500
 
 if __name__ == '__main__':
     if inicializar_database():
-        app.run(debug=True, host='0.0.0.0', port=5000)
+        app.run(debug=DEBUG, host='0.0.0.0', port=5000)
     else:
         logging.error("Falha ao inicializar o sistema!")
