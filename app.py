@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash, send_file
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash, send_file, send_from_directory
 import datetime
 import logging
 import mysql.connector
@@ -51,7 +51,7 @@ if 'PYTHONANYWHERE_DOMAIN' in os.environ:
         PERMANENT_SESSION_LIFETIME=3600
     )
 
-# CORES DO SITE FORMATO OH
+# CORES DO SITE FORMATO OH - EM FORMATO ARGB PARA EXCEL
 CORES_FORMATO = {
     'primaria': '#1a365d',      # Azul escuro
     'secundaria': '#2d3748',    # Cinza azulado
@@ -64,6 +64,39 @@ CORES_FORMATO = {
     'texto': '#2d3748',
     'texto_claro': '#718096'
 }
+
+# Converter cores hex para ARGB (adicionar 'FF' no início)
+def hex_to_argb(hex_color):
+    """Converte cor hex para formato ARGB do Excel"""
+    hex_color = hex_color.lstrip('#')
+    return 'FF' + hex_color
+
+# CORES EM FORMATO ARGB PARA USO NO EXCEL
+CORES_FORMATO_ARGB = {
+    'primaria': hex_to_argb(CORES_FORMATO['primaria']),
+    'secundaria': hex_to_argb(CORES_FORMATO['secundaria']),
+    'destaque': hex_to_argb(CORES_FORMATO['destaque']),
+    'sucesso': hex_to_argb(CORES_FORMATO['sucesso']),
+    'alerta': hex_to_argb(CORES_FORMATO['alerta']),
+    'info': hex_to_argb(CORES_FORMATO['info']),
+    'claro': hex_to_argb(CORES_FORMATO['claro']),
+    'branco': hex_to_argb(CORES_FORMATO['branco']),
+}
+
+# =============================================================================
+# CONFIGURAÇÃO PARA ARQUIVOS PDF
+# =============================================================================
+# Diretório para uploads de PDF (criar se não existir)
+UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+PDF_FOLDER = os.path.join(UPLOAD_FOLDER, 'contratos')
+
+# Criar diretórios se não existirem
+os.makedirs(PDF_FOLDER, exist_ok=True)
+
+# Configurar o Flask para servir arquivos estáticos dos diretórios de upload
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['PDF_FOLDER'] = PDF_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # =============================================================================
 # MÓDULO: DATABASE - CONEXÃO MYSQL REAL
@@ -495,6 +528,61 @@ class RelatorioManager:
 # INICIALIZAR MANAGERS
 # =============================================================================
 relatorio_manager = RelatorioManager(DatabaseConnection())
+
+# =============================================================================
+# ROTAS PARA MANIPULAÇÃO DE PDFs
+# =============================================================================
+@app.route('/uploads/contratos/<filename>')
+def servir_pdf(filename):
+    """Serve arquivos PDF da pasta de uploads"""
+    try:
+        return send_from_directory(app.config['PDF_FOLDER'], filename)
+    except FileNotFoundError:
+        return "Arquivo não encontrado", 404
+
+@app.route('/contratos/pdf/<int:contrato_id>')
+def visualizar_pdf(contrato_id):
+    """Visualiza PDF de um contrato específico"""
+    if 'user' not in session:
+        return redirect('/login')
+
+    try:
+        db = DatabaseConnection()
+        contrato = db.execute_query("SELECT arquivo_pdf FROM contratos WHERE id = %s", (contrato_id,))
+
+        if not contrato or not contrato[0]['arquivo_pdf']:
+            return "Contrato ou arquivo PDF não encontrado", 404
+
+        filename = contrato[0]['arquivo_pdf']
+        filepath = os.path.join(app.config['PDF_FOLDER'], filename)
+
+        if os.path.exists(filepath):
+            return send_file(filepath, as_attachment=False)
+        else:
+            # Se o arquivo não existe fisicamente, criar um PDF simulado
+            return criar_pdf_simulado(filename, f"Contrato ID: {contrato_id}")
+
+    except Exception as e:
+        logging.error(f"❌ Erro ao visualizar PDF: {e}")
+        return "Erro ao carregar PDF", 500
+
+def criar_pdf_simulado(filename, conteudo):
+    """Cria um PDF simulado para demonstração"""
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import letter
+
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer, pagesize=letter)
+    p.drawString(100, 750, f"CONTRATO - {conteudo}")
+    p.drawString(100, 730, "Este é um PDF simulado para demonstração.")
+    p.drawString(100, 710, f"Arquivo: {filename}")
+    p.drawString(100, 690, "Em ambiente real, este seria o contrato real.")
+    p.drawString(100, 670, f"Data: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+    p.showPage()
+    p.save()
+
+    buffer.seek(0)
+    return send_file(buffer, as_attachment=False, download_name=filename, mimetype='application/pdf')
 
 # =============================================================================
 # ROTAS PRINCIPAIS
@@ -1390,6 +1478,8 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
             color: {CORES_FORMATO['destaque']};
             border: 1px solid {CORES_FORMATO['destaque']};
         }}
+
+        /* MODAL STYLES - ATUALIZADO COM SCROLL E BOTÃO SALVAR */
         .modal {{
             display: none;
             position: fixed;
@@ -1399,6 +1489,7 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
             width: 100%;
             height: 100%;
             background-color: rgba(0,0,0,0.5);
+            overflow-y: auto;
         }}
         .modal-content {{
             background-color: {CORES_FORMATO['branco']};
@@ -1408,6 +1499,8 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
             width: 90%;
             max-width: 500px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            max-height: 85vh;
+            overflow-y: auto;
         }}
         .modal-header {{
             display: flex;
@@ -1446,23 +1539,33 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
             display: flex;
             gap: 10px;
             justify-content: flex-end;
-            margin-top: 20px;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid {CORES_FORMATO['claro']};
         }}
         .btn-cancelar {{
             background: {CORES_FORMATO['texto_claro']};
             color: {CORES_FORMATO['branco']};
-            padding: 10px 20px;
+            padding: 12px 24px;
             border: none;
             border-radius: 5px;
             cursor: pointer;
+            font-weight: 600;
         }}
         .btn-salvar {{
             background: {CORES_FORMATO['sucesso']};
             color: {CORES_FORMATO['branco']};
-            padding: 10px 20px;
+            padding: 12px 24px;
             border: none;
             border-radius: 5px;
             cursor: pointer;
+            font-weight: 600;
+        }}
+        .btn-cancelar:hover {{
+            background: {CORES_FORMATO['secundaria']};
+        }}
+        .btn-salvar:hover {{
+            background: #2f855a;
         }}
     </style>
 </head>
@@ -1512,7 +1615,7 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
         </div>
     </div>
 
-    <!-- Modal Nova Placa -->
+    <!-- Modal Nova Placa - ATUALIZADO COM SCROLL E BOTÃO SALVAR -->
     <div id="modalPlaca" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -1521,16 +1624,19 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
             </div>
             <form id="formPlaca">
                 <input type="hidden" id="placa_codigo_editar" name="placa_codigo_editar">
+
                 <div class="form-group">
-                    <label for="codigo_ativo">Código da Placa:</label>
+                    <label for="codigo_ativo"><strong>Código da Placa:</strong></label>
                     <input type="text" id="codigo_ativo" name="codigo_ativo" required>
                 </div>
+
                 <div class="form-group">
-                    <label for="endereco">Endereço:</label>
+                    <label for="endereco"><strong>Endereço:</strong></label>
                     <input type="text" id="endereco" name="endereco" required>
                 </div>
+
                 <div class="form-group">
-                    <label for="regiao">Região:</label>
+                    <label for="regiao"><strong>Região:</strong></label>
                     <select id="regiao" name="regiao" required>
                         <option value="">Selecione a região</option>
                         <option value="São Roque">São Roque</option>
@@ -1541,8 +1647,9 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
                         <option value="Alumínio">Alumínio</option>
                     </select>
                 </div>
+
                 <div class="form-group">
-                    <label for="tipo_placa">Tipo de Placa:</label>
+                    <label for="tipo_placa"><strong>Tipo de Placa:</strong></label>
                     <select id="tipo_placa" name="tipo_placa" required>
                         <option value="">Selecione o tipo</option>
                         <option value="Outdoor">Outdoor</option>
@@ -1551,12 +1658,14 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
                         <option value="Led">Led</option>
                     </select>
                 </div>
+
                 <div class="form-group">
-                    <label for="valor_mensal">Valor Mensal (R$):</label>
+                    <label for="valor_mensal"><strong>Valor Mensal (R$):</strong></label>
                     <input type="number" id="valor_mensal" name="valor_mensal" step="0.01" min="0" required>
                 </div>
+
                 <div class="form-group">
-                    <label for="status_atual">Status:</label>
+                    <label for="status_atual"><strong>Status:</strong></label>
                     <select id="status_atual" name="status_atual" required>
                         <option value="disponível">Disponível</option>
                         <option value="locado">Locado</option>
@@ -1564,13 +1673,15 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
                         <option value="manutenção">Manutenção</option>
                     </select>
                 </div>
+
                 <div class="form-group">
-                    <label for="cliente_locacao">Cliente:</label>
+                    <label for="cliente_locacao"><strong>Cliente:</strong></label>
                     <input type="text" id="cliente_locacao" name="cliente_locacao" placeholder="Deixe vazio se não houver cliente">
                 </div>
+
                 <div class="form-actions">
                     <button type="button" class="btn-cancelar" onclick="fecharModalPlaca()">Cancelar</button>
-                    <button type="submit" class="btn-salvar">Salvar Placa</button>
+                    <button type="submit" class="btn-salvar">💾 Salvar Placa</button>
                 </div>
             </form>
         </div>
@@ -1649,7 +1760,32 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
                 return;
             }}
 
-            {template_js}
+            placasFiltradas.forEach(placa => {{
+                const status_class = placa.Status_Atual.toLowerCase().replace('ç', 'c').replace('ã', 'a');
+                const cliente = placa.Cliente_Locacao || 'Sem locação';
+
+                placasGrid.innerHTML += `
+                <div class="placa-card ${{status_class}}">
+                    <div class="placa-header">
+                        <h4>📋 ${{placa.Codigo_Ativo}}</h4>
+                        <span class="status-badge ${{status_class}}">${{placa.Status_Atual}}</span>
+                    </div>
+                    <div class="placa-info">
+                        <p><strong>📍 Endereço:</strong> ${{placa.Endereco}}</p>
+                        <p><strong>🏙️ Região:</strong> ${{placa.Regiao}}</p>
+                        <p><strong>📺 Tipo:</strong> ${{placa.Tipo_Placa}}</p>
+                        <p><strong>👥 Cliente:</strong> ${{cliente}}</p>
+                        <p><strong>💰 Valor:</strong> R$ ${{placa.Valor_Mensal.toFixed(2).replace('.', ',')}}</p>
+                        <p><strong>📅 Cadastro:</strong> ${{placa.Data_Cadastro}}</p>
+                    </div>
+                    <div class="placa-actions">
+                        <button class="btn-action" onclick="editarPlaca('${{placa.Codigo_Ativo}}')">✏️ Editar</button>
+                        <button class="btn-action" onclick="detalhesPlaca('${{placa.Codigo_Ativo}}')">👁️ Detalhes</button>
+                        <button class="btn-action btn-excluir" onclick="excluirPlaca('${{placa.Codigo_Ativo}}')">🗑️ Excluir</button>
+                    </div>
+                </div>
+                `;
+            }});
         }}
 
         function mostrarAlert(mensagem, tipo) {{
@@ -2109,6 +2245,7 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
             width: 100%;
             height: 100%;
             background-color: rgba(0,0,0,0.5);
+            overflow-y: auto;
         }}
         .modal-content {{
             background-color: {CORES_FORMATO['branco']};
@@ -2118,6 +2255,8 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
             width: 90%;
             max-width: 500px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            max-height: 85vh;
+            overflow-y: auto;
         }}
         .modal-header {{
             display: flex;
@@ -2156,23 +2295,33 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
             display: flex;
             gap: 10px;
             justify-content: flex-end;
-            margin-top: 20px;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid {CORES_FORMATO['claro']};
         }}
         .btn-cancelar {{
             background: {CORES_FORMATO['texto_claro']};
             color: {CORES_FORMATO['branco']};
-            padding: 10px 20px;
+            padding: 12px 24px;
             border: none;
             border-radius: 5px;
             cursor: pointer;
+            font-weight: 600;
         }}
         .btn-salvar {{
             background: {CORES_FORMATO['sucesso']};
             color: {CORES_FORMATO['branco']};
-            padding: 10px 20px;
+            padding: 12px 24px;
             border: none;
             border-radius: 5px;
             cursor: pointer;
+            font-weight: 600;
+        }}
+        .btn-cancelar:hover {{
+            background: {CORES_FORMATO['secundaria']};
+        }}
+        .btn-salvar:hover {{
+            background: #2f855a;
         }}
         .alert {{
             padding: 15px;
@@ -2261,7 +2410,7 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn-cancelar" onclick="fecharModalCliente()">Cancelar</button>
-                    <button type="submit" class="btn-salvar">Salvar Cliente</button>
+                    <button type="submit" class="btn-salvar">💾 Salvar Cliente</button>
                 </div>
             </form>
         </div>
@@ -2403,48 +2552,44 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
 '''
 
 # =============================================================================
-# MÓDULO DE CONTRATOS (CORRIGIDO)
+# MÓDULO DE CONTRATOS (COMPLETAMENTE CORRIGIDO)
 # =============================================================================
 @app.route('/contratos')
 def contratos():
-    """Página de contratos"""
+    """Página de contratos - COMPLETAMENTE CORRIGIDA"""
     if 'user' not in session:
         return redirect('/login')
 
     db = DatabaseConnection()
 
-    # CORREÇÃO: Query corrigida incluindo todos os campos necessários
+    # Buscar contratos com informações completas
     contratos = db.execute_query("""
-        SELECT id, tipo, cliente_id, fornecedor_id, descricao, valor_mensal,
-               data_inicio, data_fim, status, observacoes, arquivo_pdf
-        FROM contratos
-        ORDER BY data_inicio DESC
+        SELECT c.*, cl.Nome_Fantasia as cliente_nome, f.razao_social as fornecedor_nome
+        FROM contratos c
+        LEFT JOIN clientes cl ON c.cliente_id = cl.id
+        LEFT JOIN fornecedores f ON c.fornecedor_id = f.id
+        ORDER BY c.data_inicio DESC
     """) or []
 
-    # Buscar nomes dos clientes separadamente
-    clientes_map = {}
-    clientes = db.execute_query("SELECT id, Nome_Fantasia FROM clientes") or []
-    for cliente in clientes:
-        clientes_map[cliente['id']] = cliente['Nome_Fantasia']
+    # Buscar clientes e fornecedores para os dropdowns
+    clientes = db.execute_query("SELECT id, Nome_Fantasia FROM clientes ORDER BY Nome_Fantasia") or []
+    fornecedores = db.execute_query("SELECT id, razao_social FROM fornecedores ORDER BY razao_social") or []
 
-    # Adicionar nome do cliente aos contratos
-    for contrato in contratos:
-        if contrato['cliente_id']:
-            contrato['cliente_nome'] = clientes_map.get(contrato['cliente_id'], 'Cliente não encontrado')
-        else:
-            contrato['cliente_nome'] = 'N/A'
-
-    return render_contratos_template(session['user'], contratos)
+    return render_contratos_template(session['user'], contratos, clientes, fornecedores)
 
 @app.route('/contratos/novo', methods=['POST'])
 def novo_contrato():
-    """Cria um novo contrato"""
+    """Cria um novo contrato - CORRIGIDO"""
     if 'user' not in session:
         return jsonify({'success': False, 'message': 'Não autorizado'})
 
     try:
         dados = request.get_json()
         db = DatabaseConnection()
+
+        # Determinar IDs baseado no tipo
+        cliente_id = dados.get('cliente_id') if dados['tipo'] == 'cliente' else None
+        fornecedor_id = dados.get('fornecedor_id') if dados['tipo'] == 'fornecedor' else None
 
         query = """
             INSERT INTO contratos
@@ -2453,13 +2598,13 @@ def novo_contrato():
         """
         params = (
             dados['tipo'],
-            dados.get('cliente_id'),
-            dados.get('fornecedor_id'),
+            cliente_id,
+            fornecedor_id,
             dados['descricao'],
             dados['valor_mensal'],
             dados['data_inicio'],
             dados.get('data_fim'),
-            'ativo',
+            dados.get('status', 'ativo'),
             dados.get('observacoes', ''),
             dados.get('arquivo_pdf', '')
         )
@@ -2473,6 +2618,52 @@ def novo_contrato():
 
     except Exception as e:
         logging.error(f"❌ Erro ao criar contrato: {e}")
+        return jsonify({'success': False, 'message': f'Erro: {str(e)}'})
+
+@app.route('/contratos/editar', methods=['POST'])
+def editar_contrato():
+    """Edita um contrato existente - NOVA FUNÇÃO"""
+    if 'user' not in session:
+        return jsonify({'success': False, 'message': 'Não autorizado'})
+
+    try:
+        dados = request.get_json()
+        db = DatabaseConnection()
+
+        # Determinar IDs baseado no tipo
+        cliente_id = dados.get('cliente_id') if dados['tipo'] == 'cliente' else None
+        fornecedor_id = dados.get('fornecedor_id') if dados['tipo'] == 'fornecedor' else None
+
+        query = """
+            UPDATE contratos
+            SET tipo = %s, cliente_id = %s, fornecedor_id = %s, descricao = %s,
+                valor_mensal = %s, data_inicio = %s, data_fim = %s, status = %s,
+                observacoes = %s, arquivo_pdf = %s
+            WHERE id = %s
+        """
+        params = (
+            dados['tipo'],
+            cliente_id,
+            fornecedor_id,
+            dados['descricao'],
+            dados['valor_mensal'],
+            dados['data_inicio'],
+            dados.get('data_fim'),
+            dados.get('status', 'ativo'),
+            dados.get('observacoes', ''),
+            dados.get('arquivo_pdf', ''),
+            dados['id']
+        )
+
+        success = db.execute_update(query, params)
+
+        if success:
+            return jsonify({'success': True, 'message': 'Contrato atualizado com sucesso!'})
+        else:
+            return jsonify({'success': False, 'message': 'Erro ao atualizar contrato'})
+
+    except Exception as e:
+        logging.error(f"❌ Erro ao editar contrato: {e}")
         return jsonify({'success': False, 'message': f'Erro: {str(e)}'})
 
 @app.route('/contratos/excluir/<int:contrato_id>', methods=['DELETE'])
@@ -2496,27 +2687,35 @@ def excluir_contrato(contrato_id):
         logging.error(f"❌ Erro ao excluir contrato: {e}")
         return jsonify({'success': False, 'message': f'Erro: {str(e)}'})
 
-def render_contratos_template(user, contratos):
-    """Renderiza o template de contratos simplificado"""
+def render_contratos_template(user, contratos, clientes, fornecedores):
+    """Renderiza o template de contratos COMPLETAMENTE CORRIGIDO"""
 
     contratos_html = ""
     for contrato in contratos:
-        nome_contratante = contrato.get('cliente_nome', 'N/A')
-        tipo_contratante = 'Cliente' if contrato.get('tipo') == 'cliente' else 'Fornecedor'
+        # Determinar nome do contratante
+        if contrato['tipo'] == 'cliente':
+            nome_contratante = contrato.get('cliente_nome', 'Cliente não especificado')
+            tipo_contratante = 'Cliente'
+        else:
+            nome_contratante = contrato.get('fornecedor_nome', 'Fornecedor não especificado')
+            tipo_contratante = 'Fornecedor'
+
         data_fim = contrato.get('data_fim') or 'Não definida'
         arquivo_pdf = contrato.get('arquivo_pdf') or 'Nenhum arquivo'
-        descricao = contrato.get('descricao', 'Sem descrição')[:30] + '...'
+        descricao = contrato.get('descricao', 'Sem descrição')
         valor_mensal = contrato.get('valor_mensal', 0)
         data_inicio = contrato.get('data_inicio', 'Não definida')
         status = contrato.get('status', 'ativo')
+        observacoes = contrato.get('observacoes', '')
 
         contratos_html += f"""
         <div class="contrato-card">
             <div class="contrato-header">
-                <h4>📋 {descricao}</h4>
+                <h4>📋 {descricao[:50]}{'...' if len(descricao) > 50 else ''}</h4>
                 <div class="contrato-actions">
-                    <button class="btn-pdf" onclick="visualizarPDF('{arquivo_pdf}')">📄 PDF</button>
-                    <button class="btn-excluir" onclick="excluirContrato({contrato.get('id', 0)})">🗑️</button>
+                    <button class="btn-editar" onclick="editarContrato({contrato.get('id', 0)})">✏️ Editar</button>
+                    <button class="btn-pdf" onclick="visualizarPDF({contrato.get('id', 0)})">📄 PDF</button>
+                    <button class="btn-excluir" onclick="excluirContrato({contrato.get('id', 0)})">🗑️ Excluir</button>
                 </div>
             </div>
             <div class="contrato-info">
@@ -2526,9 +2725,27 @@ def render_contratos_template(user, contratos):
                 <p><strong>Término:</strong> {data_fim}</p>
                 <p><strong>Status:</strong> <span class="status-badge {status}">{status}</span></p>
                 <p><strong>Arquivo:</strong> {arquivo_pdf}</p>
+                <p><strong>Observações:</strong> {observacoes[:100]}{'...' if len(observacoes) > 100 else ''}</p>
             </div>
         </div>
         """
+
+    # Converter para JSON serializable
+    def convert_to_serializable(obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        elif isinstance(obj, datetime.date):
+            return obj.isoformat()
+        elif isinstance(obj, dict):
+            return {key: convert_to_serializable(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_to_serializable(item) for item in obj]
+        else:
+            return obj
+
+    contratos_serializable = convert_to_serializable(contratos)
+    clientes_serializable = convert_to_serializable(clientes)
+    fornecedores_serializable = convert_to_serializable(fornecedores)
 
     return f'''<!DOCTYPE html>
 <html lang="pt-BR">
@@ -2630,7 +2847,7 @@ def render_contratos_template(user, contratos):
         }}
         .contratos-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
             gap: 20px;
             margin-top: 20px;
         }}
@@ -2653,11 +2870,20 @@ def render_contratos_template(user, contratos):
             display: flex;
             gap: 8px;
         }}
-        .btn-pdf {{
+        .btn-editar {{
             background: {CORES_FORMATO['info']};
             color: {CORES_FORMATO['branco']};
             border: none;
-            padding: 6px 12px;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }}
+        .btn-pdf {{
+            background: {CORES_FORMATO['alerta']};
+            color: {CORES_FORMATO['branco']};
+            border: none;
+            padding: 8px 12px;
             border-radius: 4px;
             cursor: pointer;
             font-size: 12px;
@@ -2666,7 +2892,7 @@ def render_contratos_template(user, contratos):
             background: {CORES_FORMATO['destaque']};
             color: {CORES_FORMATO['branco']};
             border: none;
-            padding: 6px 12px;
+            padding: 8px 12px;
             border-radius: 4px;
             cursor: pointer;
             font-size: 12px;
@@ -2725,6 +2951,108 @@ def render_contratos_template(user, contratos):
             color: {CORES_FORMATO['destaque']};
             border: 1px solid {CORES_FORMATO['destaque']};
         }}
+        /* MODAL STYLES - ATUALIZADO COM SCROLL */
+        .modal {{
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            overflow-y: auto;
+        }}
+        .modal-content {{
+            background-color: {CORES_FORMATO['branco']};
+            margin: 5% auto;
+            padding: 30px;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 600px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            max-height: 85vh;
+            overflow-y: auto;
+        }}
+        .modal-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid {CORES_FORMATO['claro']};
+        }}
+        .close {{
+            color: {CORES_FORMATO['texto_claro']};
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }}
+        .close:hover {{
+            color: {CORES_FORMATO['destaque']};
+        }}
+        .form-group {{
+            margin-bottom: 20px;
+        }}
+        .form-group label {{
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: {CORES_FORMATO['primaria']};
+        }}
+        .form-group input, .form-group select, .form-group textarea {{
+            width: 100%;
+            padding: 10px;
+            border: 1px solid {CORES_FORMATO['claro']};
+            border-radius: 5px;
+            font-size: 14px;
+        }}
+        .form-group textarea {{
+            height: 100px;
+            resize: vertical;
+        }}
+        .form-actions {{
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid {CORES_FORMATO['claro']};
+        }}
+        .btn-cancelar {{
+            background: {CORES_FORMATO['texto_claro']};
+            color: {CORES_FORMATO['branco']};
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+        }}
+        .btn-salvar {{
+            background: {CORES_FORMATO['sucesso']};
+            color: {CORES_FORMATO['branco']};
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+        }}
+        .btn-cancelar:hover {{
+            background: {CORES_FORMATO['secundaria']};
+        }}
+        .btn-salvar:hover {{
+            background: #2f855a;
+        }}
+        .file-upload {{
+            border: 2px dashed {CORES_FORMATO['claro']};
+            padding: 20px;
+            text-align: center;
+            border-radius: 5px;
+            cursor: pointer;
+        }}
+        .file-upload:hover {{
+            border-color: {CORES_FORMATO['info']};
+        }}
     </style>
 </head>
 <body>
@@ -2759,14 +3087,150 @@ def render_contratos_template(user, contratos):
             </div>
         </div>
     </div>
+
+    <!-- Modal Novo/Editar Contrato - ATUALIZADO COM SCROLL -->
+    <div id="modalContrato" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTituloContrato">Novo Contrato</h3>
+                <span class="close" onclick="fecharModalContrato()">&times;</span>
+            </div>
+            <form id="formContrato">
+                <input type="hidden" id="contrato_id" name="contrato_id">
+
+                <div class="form-group">
+                    <label for="tipo_contrato">Tipo de Contrato:</label>
+                    <select id="tipo_contrato" name="tipo_contrato" required onchange="toggleContratante()">
+                        <option value="cliente">Cliente</option>
+                        <option value="fornecedor">Fornecedor</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="cliente-group">
+                    <label for="cliente_id">Cliente:</label>
+                    <select id="cliente_id" name="cliente_id">
+                        <option value="">Selecione um cliente</option>
+                        {"".join([f'<option value="{cliente["id"]}">{cliente["Nome_Fantasia"]}</option>' for cliente in clientes])}
+                    </select>
+                </div>
+
+                <div class="form-group" id="fornecedor-group" style="display: none;">
+                    <label for="fornecedor_id">Fornecedor:</label>
+                    <select id="fornecedor_id" name="fornecedor_id">
+                        <option value="">Selecione um fornecedor</option>
+                        {"".join([f'<option value="{fornecedor["id"]}">{fornecedor["razao_social"]}</option>' for fornecedor in fornecedores])}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="descricao">Descrição do Contrato:</label>
+                    <textarea id="descricao" name="descricao" required placeholder="Descreva o contrato..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="valor_mensal">Valor Mensal (R$):</label>
+                    <input type="number" id="valor_mensal" name="valor_mensal" step="0.01" min="0" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="data_inicio">Data de Início:</label>
+                    <input type="date" id="data_inicio" name="data_inicio" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="data_fim">Data de Término (opcional):</label>
+                    <input type="date" id="data_fim" name="data_fim">
+                </div>
+
+                <div class="form-group">
+                    <label for="status">Status:</label>
+                    <select id="status" name="status" required>
+                        <option value="ativo">Ativo</option>
+                        <option value="inativo">Inativo</option>
+                        <option value="vencido">Vencido</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="observacoes">Observações:</label>
+                    <textarea id="observacoes" name="observacoes" placeholder="Observações adicionais..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="arquivo_pdf">Arquivo PDF (nome do arquivo):</label>
+                    <input type="text" id="arquivo_pdf" name="arquivo_pdf" placeholder="ex: contrato_cliente_001.pdf">
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-cancelar" onclick="fecharModalContrato()">Cancelar</button>
+                    <button type="submit" class="btn-salvar">💾 Salvar Contrato</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
-        function visualizarPDF(arquivo) {{
-            if (arquivo !== 'Nenhum arquivo') {{
-                alert('Visualizando PDF: ' + arquivo + '\\n\\nFuncionalidade em desenvolvimento!');
+        let contratoEditando = null;
+        const contratos = {json.dumps(contratos_serializable)};
+        const clientes = {json.dumps(clientes_serializable)};
+        const fornecedores = {json.dumps(fornecedores_serializable)};
+
+        function abrirModalNovoContrato() {{
+            document.getElementById('modalTituloContrato').textContent = 'Novo Contrato';
+            document.getElementById('formContrato').reset();
+            document.getElementById('contrato_id').value = '';
+            document.getElementById('data_inicio').valueAsDate = new Date();
+            contratoEditando = null;
+            document.getElementById('modalContrato').style.display = 'block';
+        }}
+
+        function fecharModalContrato() {{
+            document.getElementById('modalContrato').style.display = 'none';
+        }}
+
+        function toggleContratante() {{
+            const tipo = document.getElementById('tipo_contrato').value;
+            if (tipo === 'cliente') {{
+                document.getElementById('cliente-group').style.display = 'block';
+                document.getElementById('fornecedor-group').style.display = 'none';
             }} else {{
-                alert('Nenhum arquivo PDF disponível para este contrato.');
+                document.getElementById('cliente-group').style.display = 'none';
+                document.getElementById('fornecedor-group').style.display = 'block';
             }}
         }}
+
+        function editarContrato(contratoId) {{
+            const contrato = contratos.find(c => c.id === contratoId);
+
+            if (contrato) {{
+                document.getElementById('modalTituloContrato').textContent = 'Editar Contrato';
+                document.getElementById('contrato_id').value = contrato.id;
+                document.getElementById('tipo_contrato').value = contrato.tipo;
+                document.getElementById('descricao').value = contrato.descricao;
+                document.getElementById('valor_mensal').value = contrato.valor_mensal;
+                document.getElementById('data_inicio').value = contrato.data_inicio;
+                document.getElementById('data_fim').value = contrato.data_fim || '';
+                document.getElementById('status').value = contrato.status;
+                document.getElementById('observacoes').value = contrato.observacoes || '';
+                document.getElementById('arquivo_pdf').value = contrato.arquivo_pdf || '';
+
+                if (contrato.tipo === 'cliente') {{
+                    document.getElementById('cliente_id').value = contrato.cliente_id || '';
+                }} else {{
+                    document.getElementById('fornecedor_id').value = contrato.fornecedor_id || '';
+                }}
+
+                toggleContratante();
+                contratoEditando = contrato;
+                document.getElementById('modalContrato').style.display = 'block';
+            }}
+        }}
+
+        function visualizarPDF(contratoId) {{
+            // Abre o PDF em uma nova aba
+            window.open('/contratos/pdf/' + contratoId, '_blank');
+        }}
+
         function excluirContrato(contratoId) {{
             if (confirm('Tem certeza que deseja excluir este contrato?')) {{
                 fetch('/contratos/excluir/' + contratoId, {{ method: 'DELETE' }})
@@ -2785,9 +3249,7 @@ def render_contratos_template(user, contratos):
                     }});
             }}
         }}
-        function abrirModalNovoContrato() {{
-            alert('Funcionalidade de novo contrato em desenvolvimento!');
-        }}
+
         function mostrarAlert(mensagem, tipo) {{
             const alertContainer = document.getElementById('alert-container');
             const alert = document.createElement('div');
@@ -2799,17 +3261,85 @@ def render_contratos_template(user, contratos):
                 alert.remove();
             }}, 5000);
         }}
+
+        // Envio do formulário
+        document.getElementById('formContrato').addEventListener('submit', function(e) {{
+            e.preventDefault();
+
+            const formData = new FormData(this);
+            const contratoId = document.getElementById('contrato_id').value;
+
+            const dados = {{
+                tipo: document.getElementById('tipo_contrato').value,
+                descricao: document.getElementById('descricao').value,
+                valor_mensal: parseFloat(document.getElementById('valor_mensal').value),
+                data_inicio: document.getElementById('data_inicio').value,
+                data_fim: document.getElementById('data_fim').value || null,
+                status: document.getElementById('status').value,
+                observacoes: document.getElementById('observacoes').value,
+                arquivo_pdf: document.getElementById('arquivo_pdf').value || ''
+            }};
+
+            // Adicionar cliente ou fornecedor
+            if (dados.tipo === 'cliente') {{
+                dados.cliente_id = document.getElementById('cliente_id').value || null;
+                dados.fornecedor_id = null;
+            }} else {{
+                dados.fornecedor_id = document.getElementById('fornecedor_id').value || null;
+                dados.cliente_id = null;
+            }}
+
+            // Adicionar ID se estiver editando
+            if (contratoId) {{
+                dados.id = parseInt(contratoId);
+            }}
+
+            const url = contratoId ? '/contratos/editar' : '/contratos/novo';
+
+            fetch(url, {{
+                method: 'POST',
+                headers: {{
+                    'Content-Type': 'application/json',
+                }},
+                body: JSON.stringify(dados)
+            }})
+            .then(response => response.json())
+            .then(data => {{
+                if (data.success) {{
+                    mostrarAlert(data.message, 'success');
+                    fecharModalContrato();
+                    setTimeout(() => location.reload(), 1500);
+                }} else {{
+                    mostrarAlert(data.message, 'error');
+                }}
+            }})
+            .catch(error => {{
+                console.error('Erro:', error);
+                mostrarAlert('Erro ao salvar contrato', 'error');
+            }});
+        }});
+
+        // Fechar modal ao clicar fora
+        window.onclick = function(event) {{
+            const modal = document.getElementById('modalContrato');
+            if (event.target === modal) {{
+                fecharModalContrato();
+            }}
+        }}
+
+        // Inicializar
+        toggleContratante();
     </script>
 </body>
 </html>
 '''
 
 # =============================================================================
-# MÓDULOS ADICIONAIS (COMPLETADOS)
+# MÓDULO DE RELATÓRIOS (CORRIGIDO COM EXPORTAÇÃO)
 # =============================================================================
 @app.route('/relatorios')
 def relatorios():
-    """Página de relatórios"""
+    """Página de relatórios - CORRIGIDA COM EXPORTAÇÃO"""
     if 'user' not in session:
         return redirect('/login')
 
@@ -2934,6 +3464,9 @@ def relatorios():
             color: {CORES_FORMATO['primaria']};
             margin-bottom: 15px;
             font-size: 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }}
         .relatorio-item {{
             background: {CORES_FORMATO['branco']};
@@ -2948,12 +3481,44 @@ def relatorios():
         .btn-exportar {{
             background: {CORES_FORMATO['sucesso']};
             color: {CORES_FORMATO['branco']};
-            padding: 10px 20px;
+            padding: 8px 16px;
             border: none;
             border-radius: 5px;
             cursor: pointer;
-            font-size: 14px;
-            margin-top: 10px;
+            font-size: 12px;
+            text-decoration: none;
+            display: inline-block;
+        }}
+        .btn-exportar:hover {{
+            background: {CORES_FORMATO['info']};
+        }}
+        .filtros {{
+            background: {CORES_FORMATO['claro']};
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }}
+        .filtros h4 {{
+            color: {CORES_FORMATO['primaria']};
+            margin-bottom: 10px;
+        }}
+        .filtro-group {{
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }}
+        .filtro-group input {{
+            padding: 8px;
+            border: 1px solid {CORES_FORMATO['claro']};
+            border-radius: 4px;
+        }}
+        .btn-filtrar {{
+            background: {CORES_FORMATO['info']};
+            color: {CORES_FORMATO['branco']};
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
         }}
     </style>
 </head>
@@ -2980,24 +3545,73 @@ def relatorios():
         <div class="content">
             <h2 class="section-title">📊 Módulo de Relatórios</h2>
 
+            <div class="filtros">
+                <h4>🔍 Filtros por Data</h4>
+                <div class="filtro-group">
+                    <label>Data Início:</label>
+                    <input type="date" id="data_inicio">
+                    <label>Data Fim:</label>
+                    <input type="date" id="data_fim">
+                    <button class="btn-filtrar" onclick="aplicarFiltros()">Aplicar Filtros</button>
+                    <button class="btn-filtrar" onclick="limparFiltros()" style="background: {CORES_FORMATO['texto_claro']};">Limpar</button>
+                </div>
+            </div>
+
             <div class="relatorios-grid">
                 <div class="relatorio-card">
-                    <h3>📊 Ocupação por Região</h3>
+                    <h3>📊 Ocupação por Região
+                        <a href="/relatorios/exportar/ocupacao" class="btn-exportar">📥 Exportar Excel</a>
+                    </h3>
                     {generate_ocupacao_html(relatorio_ocupacao)}
                 </div>
 
                 <div class="relatorio-card">
-                    <h3>💰 Relatórios Financeiros</h3>
+                    <h3>💰 Relatórios Financeiros
+                        <a href="/relatorios/exportar/financeiro" class="btn-exportar">📥 Exportar Excel</a>
+                    </h3>
                     {generate_financeiro_html(relatorio_financeiro)}
                 </div>
 
                 <div class="relatorio-card">
-                    <h3>🏙️ Resumo por Região</h3>
+                    <h3>🏙️ Resumo por Região
+                        <a href="/relatorios/exportar/inventario" class="btn-exportar">📥 Exportar Excel</a>
+                    </h3>
                     {generate_regiao_html(relatorio_regiao)}
                 </div>
             </div>
         </div>
     </div>
+
+    <script>
+        function aplicarFiltros() {{
+            const dataInicio = document.getElementById('data_inicio').value;
+            const dataFim = document.getElementById('data_fim').value;
+
+            if (dataInicio || dataFim) {{
+                alert('Filtros aplicados!\\nData Início: ' + (dataInicio || 'Não definida') +
+                      '\\nData Fim: ' + (dataFim || 'Não definida') +
+                      '\\n\\nEm ambiente real, os relatórios seriam filtrados por período.');
+            }} else {{
+                alert('Por favor, selecione pelo menos uma data para filtrar.');
+            }}
+        }}
+
+        function limparFiltros() {{
+            document.getElementById('data_inicio').value = '';
+            document.getElementById('data_fim').value = '';
+            alert('Filtros limpos!');
+        }}
+
+        // Definir data padrão para o último mês
+        window.onload = function() {{
+            const hoje = new Date();
+            const umMesAtras = new Date();
+            umMesAtras.setMonth(hoje.getMonth() - 1);
+
+            document.getElementById('data_inicio').value = umMesAtras.toISOString().split('T')[0];
+            document.getElementById('data_fim').value = hoje.toISOString().split('T')[0];
+        }}
+    </script>
 </body>
 </html>
 '''
@@ -3082,9 +3696,252 @@ def generate_regiao_html(relatorio_regiao):
         """
     return html
 
+# =============================================================================
+# ROTAS PARA EXPORTAÇÃO DE RELATÓRIOS - COMPLETAMENTE CORRIGIDAS
+# =============================================================================
+
+@app.route('/relatorios/exportar/<tipo>')
+def exportar_relatorio(tipo):
+    """Exporta relatórios específicos - CORRIGIDA"""
+    if 'user' not in session:
+        return redirect('/login')
+
+    try:
+        if tipo == 'ocupacao':
+            dados = relatorio_manager.gerar_relatorio_ocupacao()
+            filename = f'relatorio_ocupacao_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+            return exportar_relatorio_ocupacao_excel(dados, filename)
+
+        elif tipo == 'financeiro':
+            dados = relatorio_manager.gerar_relatorio_financeiro()
+            filename = f'relatorio_financeiro_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+            return exportar_relatorio_financeiro_excel(dados, filename)
+
+        elif tipo == 'inventario':
+            dados = relatorio_manager.gerar_relatorio_inventario()
+            filename = f'relatorio_inventario_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+            return exportar_relatorio_inventario_excel(dados, filename)
+
+        else:
+            return "Tipo de relatório inválido", 400
+
+    except Exception as e:
+        logging.error(f"❌ Erro ao exportar relatório: {e}")
+        return f"Erro ao exportar relatório: {str(e)}", 500
+
+def exportar_relatorio_ocupacao_excel(dados, filename):
+    """Exporta relatório de ocupação para Excel - CORRIGIDA"""
+    try:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Ocupação por Região"
+
+        # Cabeçalhos
+        headers = ["Região", "Status", "Quantidade", "Faturamento (R$)"]
+        ws.append(headers)
+
+        # Dados
+        if dados:
+            for regiao, items in dados.items():
+                for item in items:
+                    ws.append([
+                        regiao,
+                        item.get('Status_Atual', ''),
+                        item.get('quantidade', 0),
+                        item.get('faturamento', 0) or 0
+                    ])
+
+        # Formatar cabeçalhos - CORREÇÃO: Usar CORES_FORMATO_ARGB
+        for col in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
+                                   end_color=CORES_FORMATO_ARGB['primaria'],
+                                   fill_type="solid")
+
+        # Ajustar largura das colunas
+        for column in ws.columns:
+            max_length = 0
+            column_letter = get_column_letter(column[0].column)
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+
+        # Salvar em buffer
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        logging.error(f"❌ Erro ao exportar ocupação: {e}")
+        return f"Erro ao exportar ocupação: {str(e)}", 500
+
+def exportar_relatorio_financeiro_excel(dados, filename):
+    """Exporta relatório financeiro para Excel - CORRIGIDA"""
+    try:
+        wb = Workbook()
+
+        # Aba de faturamento por região
+        if dados.get('faturamento_regiao'):
+            ws1 = wb.active
+            ws1.title = "Faturamento por Região"
+            ws1.append(["Região", "Faturamento (R$)"])
+            for item in dados['faturamento_regiao']:
+                ws1.append([
+                    item.get('Regiao', ''),
+                    item.get('faturamento', 0) or 0
+                ])
+
+            # Formatar cabeçalhos - CORREÇÃO: Usar CORES_FORMATO_ARGB
+            for col in range(1, 3):
+                cell = ws1.cell(row=1, column=col)
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
+                                       end_color=CORES_FORMATO_ARGB['primaria'],
+                                       fill_type="solid")
+
+        # Aba de faturamento por tipo
+        if dados.get('faturamento_tipo'):
+            ws2 = wb.create_sheet("Faturamento por Tipo")
+            ws2.append(["Tipo de Placa", "Faturamento (R$)"])
+            for item in dados['faturamento_tipo']:
+                ws2.append([
+                    item.get('Tipo_Placa', ''),
+                    item.get('faturamento', 0) or 0
+                ])
+
+            # Formatar cabeçalhos - CORREÇÃO: Usar CORES_FORMATO_ARGB
+            for col in range(1, 3):
+                cell = ws2.cell(row=1, column=col)
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
+                                       end_color=CORES_FORMATO_ARGB['primaria'],
+                                       fill_type="solid")
+
+        # Aba de top clientes
+        if dados.get('top_clientes'):
+            ws3 = wb.create_sheet("Top Clientes")
+            ws3.append(["Cliente", "Faturamento (R$)"])
+            for item in dados['top_clientes']:
+                ws3.append([
+                    item.get('Cliente_Locacao', ''),
+                    item.get('faturamento', 0) or 0
+                ])
+
+            # Formatar cabeçalhos - CORREÇÃO: Usar CORES_FORMATO_ARGB
+            for col in range(1, 3):
+                cell = ws3.cell(row=1, column=col)
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
+                                       end_color=CORES_FORMATO_ARGB['primaria'],
+                                       fill_type="solid")
+
+        # Ajustar largura das colunas em todas as abas
+        for ws in wb.worksheets:
+            for column in ws.columns:
+                max_length = 0
+                column_letter = get_column_letter(column[0].column)
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                ws.column_dimensions[column_letter].width = adjusted_width
+
+        # Salvar em buffer
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        logging.error(f"❌ Erro ao exportar financeiro: {e}")
+        return f"Erro ao exportar financeiro: {str(e)}", 500
+
+def exportar_relatorio_inventario_excel(dados, filename):
+    """Exporta relatório de inventário para Excel - CORRIGIDA"""
+    try:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Inventário Completo"
+
+        headers = ["Código", "Endereço", "Região", "Tipo", "Status", "Cliente", "Valor Mensal (R$)", "Data Cadastro"]
+        ws.append(headers)
+
+        if dados:
+            for item in dados:
+                ws.append([
+                    item.get('Codigo_Ativo', ''),
+                    item.get('Endereco', ''),
+                    item.get('Regiao', ''),
+                    item.get('Tipo_Placa', ''),
+                    item.get('Status_Atual', ''),
+                    item.get('Cliente_Locacao', '') or "Sem locação",
+                    item.get('Valor_Mensal', 0),
+                    item.get('Data_Cadastro', '')
+                ])
+
+        # Formatar cabeçalhos - CORREÇÃO: Usar CORES_FORMATO_ARGB
+        for col in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
+                                   end_color=CORES_FORMATO_ARGB['primaria'],
+                                   fill_type="solid")
+
+        # Ajustar largura das colunas
+        for column in ws.columns:
+            max_length = 0
+            column_letter = get_column_letter(column[0].column)
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+
+        # Salvar em buffer
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        logging.error(f"❌ Erro ao exportar inventário: {e}")
+        return f"Erro ao exportar inventário: {str(e)}", 500
+
+# =============================================================================
+# MÓDULO DE EXPORTAÇÃO DE DADOS (COMPLETAMENTE CORRIGIDO)
+# =============================================================================
+
 @app.route('/exportar_dados')
 def exportar_dados():
-    """Página de exportação de dados"""
+    """Página de exportação de dados - CORRIGIDA"""
     if 'user' not in session:
         return redirect('/login')
 
@@ -3213,6 +4070,8 @@ def exportar_dados():
             font-size: 14px;
             font-weight: 600;
             transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
         }}
         .btn-exportar:hover {{
             background: {CORES_FORMATO['info']};
@@ -3247,19 +4106,25 @@ def exportar_dados():
                 <div class="export-card">
                     <h3>📋 Exportar Inventário</h3>
                     <p>Exportar todas as placas do inventário em formato Excel</p>
-                    <button class="btn-exportar" onclick="window.location.href='/exportar/inventario'">Exportar</button>
+                    <a href="/exportar/inventario" class="btn-exportar">📥 Exportar Excel</a>
                 </div>
 
                 <div class="export-card">
                     <h3>👥 Exportar Clientes</h3>
                     <p>Exportar lista de clientes em formato Excel</p>
-                    <button class="btn-exportar" onclick="window.location.href='/exportar/clientes'">Exportar</button>
+                    <a href="/exportar/clientes" class="btn-exportar">📥 Exportar Excel</a>
                 </div>
 
                 <div class="export-card">
                     <h3>📑 Exportar Contratos</h3>
                     <p>Exportar lista de contratos em formato Excel</p>
-                    <button class="btn-exportar" onclick="window.location.href='/exportar/contratos'">Exportar</button>
+                    <a href="/exportar/contratos" class="btn-exportar">📥 Exportar Excel</a>
+                </div>
+
+                <div class="export-card">
+                    <h3>📊 Exportar Relatórios</h3>
+                    <p>Exportar relatórios completos em Excel</p>
+                    <a href="/relatorios" class="btn-exportar">📊 Ver Relatórios</a>
                 </div>
             </div>
         </div>
@@ -3270,7 +4135,7 @@ def exportar_dados():
 
 @app.route('/exportar/inventario')
 def exportar_inventario():
-    """Exporta o inventário para Excel"""
+    """Exporta o inventário para Excel - CORRIGIDA"""
     if 'user' not in session:
         return redirect('/login')
 
@@ -3301,14 +4166,16 @@ def exportar_inventario():
                 placa['Tipo_Placa'],
                 placa['Status_Atual'],
                 placa['Cliente_Locacao'] or "Sem locação",
-                placa['Valor_Mensal'],
+                float(placa['Valor_Mensal']) if placa['Valor_Mensal'] else 0,
                 placa['Data_Cadastro']
             ])
 
-        # Formatação
+        # Formatação - CORREÇÃO: Usar CORES_FORMATO_ARGB
         for cell in ws[1]:
             cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill(start_color=CORES_FORMATO['primaria'], end_color=CORES_FORMATO['primaria'], fill_type="solid")
+            cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
+                                   end_color=CORES_FORMATO_ARGB['primaria'],
+                                   fill_type="solid")
 
         # Ajustar largura das colunas
         for column in ws.columns:
@@ -3337,11 +4204,11 @@ def exportar_inventario():
 
     except Exception as e:
         logging.error(f"❌ Erro ao exportar inventário: {e}")
-        return "Erro ao exportar dados", 500
+        return f"Erro ao exportar inventário: {str(e)}", 500
 
 @app.route('/exportar/clientes')
 def exportar_clientes():
-    """Exporta a lista de clientes para Excel"""
+    """Exporta a lista de clientes para Excel - CORRIGIDA"""
     if 'user' not in session:
         return redirect('/login')
 
@@ -3373,10 +4240,12 @@ def exportar_clientes():
                 cliente['created_at']
             ])
 
-        # Formatação
+        # Formatação - CORREÇÃO: Usar CORES_FORMATO_ARGB
         for cell in ws[1]:
             cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill(start_color=CORES_FORMATO['primaria'], end_color=CORES_FORMATO['primaria'], fill_type="solid")
+            cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
+                                   end_color=CORES_FORMATO_ARGB['primaria'],
+                                   fill_type="solid")
 
         # Ajustar largura das colunas
         for column in ws.columns:
@@ -3405,21 +4274,22 @@ def exportar_clientes():
 
     except Exception as e:
         logging.error(f"❌ Erro ao exportar clientes: {e}")
-        return "Erro ao exportar dados", 500
+        return f"Erro ao exportar clientes: {str(e)}", 500
 
 @app.route('/exportar/contratos')
 def exportar_contratos():
-    """Exporta a lista de contratos para Excel"""
+    """Exporta a lista de contratos para Excel - CORRIGIDA"""
     if 'user' not in session:
         return redirect('/login')
 
     try:
         db = DatabaseConnection()
         contratos = db.execute_query("""
-            SELECT tipo, cliente_id, fornecedor_id, descricao, valor_mensal,
-                   data_inicio, data_fim, status, observacoes, arquivo_pdf, created_at
-            FROM contratos
-            ORDER BY data_inicio DESC
+            SELECT c.*, cl.Nome_Fantasia as cliente_nome, f.razao_social as fornecedor_nome
+            FROM contratos c
+            LEFT JOIN clientes cl ON c.cliente_id = cl.id
+            LEFT JOIN fornecedores f ON c.fornecedor_id = f.id
+            ORDER BY c.data_inicio DESC
         """) or []
 
         # Criar um workbook e adicionar uma planilha
@@ -3428,30 +4298,37 @@ def exportar_contratos():
         ws.title = "Contratos"
 
         # Cabeçalhos
-        headers = ["Tipo", "Cliente ID", "Fornecedor ID", "Descrição", "Valor Mensal",
-                   "Data Início", "Data Fim", "Status", "Observações", "Arquivo PDF", "Data Cadastro"]
+        headers = ["ID", "Tipo", "Cliente/Fornecedor", "Descrição", "Valor Mensal",
+                   "Data Início", "Data Fim", "Status", "Arquivo PDF", "Data Cadastro"]
         ws.append(headers)
 
         # Adicionar dados
         for contrato in contratos:
+            # Determinar nome do contratante
+            if contrato['tipo'] == 'cliente':
+                nome_contratante = contrato.get('cliente_nome', 'N/A')
+            else:
+                nome_contratante = contrato.get('fornecedor_nome', 'N/A')
+
             ws.append([
+                contrato['id'],
                 contrato['tipo'],
-                contrato['cliente_id'],
-                contrato['fornecedor_id'],
+                nome_contratante,
                 contrato['descricao'],
-                contrato['valor_mensal'],
+                float(contrato['valor_mensal']) if contrato['valor_mensal'] else 0,
                 contrato['data_inicio'],
-                contrato['data_fim'],
+                contrato['data_fim'] or 'N/A',
                 contrato['status'],
-                contrato['observacoes'],
-                contrato['arquivo_pdf'],
+                contrato['arquivo_pdf'] or 'N/A',
                 contrato['created_at']
             ])
 
-        # Formatação
+        # Formatação - CORREÇÃO: Usar CORES_FORMATO_ARGB
         for cell in ws[1]:
             cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill(start_color=CORES_FORMATO['primaria'], end_color=CORES_FORMATO['primaria'], fill_type="solid")
+            cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
+                                   end_color=CORES_FORMATO_ARGB['primaria'],
+                                   fill_type="solid")
 
         # Ajustar largura das colunas
         for column in ws.columns:
@@ -3480,8 +4357,11 @@ def exportar_contratos():
 
     except Exception as e:
         logging.error(f"❌ Erro ao exportar contratos: {e}")
-        return "Erro ao exportar dados", 500
+        return f"Erro ao exportar contratos: {str(e)}", 500
 
+# =============================================================================
+# INICIALIZAÇÃO DO SISTEMA
+# =============================================================================
 if __name__ == '__main__':
     if inicializar_database():
         app.run(debug=DEBUG, host='0.0.0.0', port=5000)
