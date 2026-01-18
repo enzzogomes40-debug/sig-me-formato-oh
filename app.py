@@ -51,17 +51,19 @@ if 'PYTHONANYWHERE_DOMAIN' in os.environ:
         PERMANENT_SESSION_LIFETIME=3600
     )
 
-# CORES DO SITE FORMATO OH - EM FORMATO ARGB PARA EXCEL
+# =============================================================================
+# CORES DO SITE - NOVA PALETA VIBRANTE E REVIGORANTE
+# =============================================================================
 CORES_FORMATO = {
-    'primaria': '#1a365d',      # Azul escuro
-    'secundaria': '#2d3748',    # Cinza azulado
-    'destaque': '#e53e3e',      # Vermelho
-    'sucesso': '#38a169',       # Verde
-    'alerta': '#dd6b20',        # Laranja
-    'info': '#3182ce',          # Azul
-    'claro': '#f7fafc',         # Cinza muito claro
-    'branco': '#ffffff',
-    'texto': '#2d3748',
+    'primaria': '#00A8E8',      # Azul vibrante
+    'secundaria': '#007EA7',    # Azul médio
+    'destaque': '#FF6B6B',      # Vermelho coral vibrante
+    'sucesso': '#4ECDC4',       # Verde água vibrante
+    'alerta': '#FFA726',        # Laranja vibrante
+    'info': '#6C63FF',          # Azul violeta vibrante
+    'claro': '#F8F9FA',         # Cinza muito claro
+    'branco': '#FFFFFF',
+    'texto': '#2D3748',
     'texto_claro': '#718096'
 }
 
@@ -82,6 +84,82 @@ CORES_FORMATO_ARGB = {
     'claro': hex_to_argb(CORES_FORMATO['claro']),
     'branco': hex_to_argb(CORES_FORMATO['branco']),
 }
+
+# =============================================================================
+# MÓDULO: CALCULADOR BI-SEMANA (14 EM 14 DIAS)
+# =============================================================================
+class CalculadoraBisemana:
+    @staticmethod
+    def calcular_bisemana(data):
+        """Calcula o período bi-semanal para uma data específica (14 em 14 dias)"""
+        # Data de referência: 1º de janeiro do ano
+        data_referencia = datetime.date(data.year, 1, 1)
+
+        # Calcular diferença de dias desde a data de referência
+        dias_diferenca = (data - data_referencia).days
+
+        # Cada bi-semana tem 14 dias
+        # Bi-semana 1: dias 0-13, Bi-semana 2: dias 14-27, etc.
+        bisemana = (dias_diferenca // 14) + 1
+
+        # Calcular data de início e fim do período
+        dias_inicio = (bisemana - 1) * 14
+        dias_fim = dias_inicio + 13
+
+        data_inicio = data_referencia + datetime.timedelta(days=dias_inicio)
+        data_fim = data_referencia + datetime.timedelta(days=dias_fim)
+
+        # Ajustar para não ultrapassar o final do ano
+        if data_fim.year > data.year:
+            data_fim = datetime.date(data.year, 12, 31)
+
+        periodo_id = f"{data.year}_B{bisemana:02d}"
+
+        return {
+            'ano': data.year,
+            'bisemana': bisemana,
+            'periodo_id': periodo_id,
+            'data_inicio': data_inicio,
+            'data_fim': data_fim,
+            'descricao': f"{data_inicio.strftime('%d/%m')} a {data_fim.strftime('%d/%m/%Y')}",
+            'total_dias': 14
+        }
+
+    @staticmethod
+    def obter_periodo_atual():
+        """Retorna o período bi-semanal atual"""
+        hoje = datetime.date.today()
+        return CalculadoraBisemana.calcular_bisemana(hoje)
+
+    @staticmethod
+    def gerar_periodos_ano(ano):
+        """Gera todos os períodos bi-semanais de um ano"""
+        periodos = []
+        data_inicio = datetime.date(ano, 1, 1)
+
+        for i in range(0, 365, 14):
+            data_inicio_periodo = data_inicio + datetime.timedelta(days=i)
+            periodo = CalculadoraBisemana.calcular_bisemana(data_inicio_periodo)
+            if periodo['ano'] == ano:
+                periodos.append(periodo)
+
+        return periodos
+
+    @staticmethod
+    def obter_periodo_por_id(periodo_id):
+        """Obtém um período pelo ID (ex: 2024_B01)"""
+        try:
+            ano_str, bisemana_str = periodo_id.split('_')
+            ano = int(ano_str)
+            bisemana = int(bisemana_str[1:])  # Remove o 'B'
+
+            # Calcular data inicial do período
+            dias_inicio = (bisemana - 1) * 14
+            data_inicio = datetime.date(ano, 1, 1) + datetime.timedelta(days=dias_inicio)
+
+            return CalculadoraBisemana.calcular_bisemana(data_inicio)
+        except:
+            return None
 
 # =============================================================================
 # CONFIGURAÇÃO PARA ARQUIVOS PDF
@@ -274,6 +352,31 @@ def inicializar_database():
             )
         """)
 
+        # =============================================================================
+        # NOVA TABELA: RESERVAS BI-SEMANA (14 EM 14 DIAS)
+        # =============================================================================
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS reservas_bisemana (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                placa_id INT NOT NULL,
+                cliente_id INT NOT NULL,
+                periodo_id VARCHAR(20) NOT NULL,
+                data_inicio DATE NOT NULL,
+                data_fim DATE NOT NULL,
+                ano INT NOT NULL,
+                bisemana INT NOT NULL,
+                valor_periodo DECIMAL(10,2) NOT NULL,
+                status ENUM('reservada', 'ativa', 'concluída', 'cancelada') DEFAULT 'reservada',
+                observacoes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (placa_id) REFERENCES placas(id) ON DELETE CASCADE,
+                FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE CASCADE,
+                INDEX idx_periodo (periodo_id),
+                INDEX idx_placa_periodo (placa_id, periodo_id),
+                UNIQUE KEY uk_placa_periodo (placa_id, periodo_id)
+            )
+        """)
+
         # Inserir alguns clientes de exemplo se a tabela estiver vazia
         cursor.execute("SELECT COUNT(*) as count FROM clientes")
         if cursor.fetchone()[0] == 0:
@@ -375,7 +478,7 @@ def inicializar_database():
 
             for placa in placas_exemplo:
                 cursor.execute(
-                    "INSERT INTO placas (Codigo_Ativo, Endereco, Regiao, Tipo_Placa, Status_Atual, Cliente_Locacao, Valor_Mensal, Data_Cadastro) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    "INSERT INTO placas (Codigo_Ativo, Endereco, Regiao, Tipo_Placa, Valor_Mensal, Data_Cadastro, Status_Atual, Cliente_Locacao) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                     placa
                 )
 
@@ -400,6 +503,30 @@ def inicializar_database():
                 cursor.execute(
                     "INSERT INTO transacoes_financeiras (tipo, descricao, valor, categoria, data_transacao, data_vencimento, status, cliente_id, fornecedor_id, observacoes) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     transacao
+                )
+
+        # Inserir algumas reservas bi-semanais de exemplo
+        cursor.execute("SELECT COUNT(*) as count FROM reservas_bisemana")
+        if cursor.fetchone()[0] == 0:
+            # Obter período atual
+            periodo_atual = CalculadoraBisemana.obter_periodo_atual()
+            periodo_proximo = CalculadoraBisemana.calcular_bisemana(datetime.date.today() + datetime.timedelta(days=14))
+
+            reservas_exemplo = [
+                (1, 1, periodo_atual['periodo_id'], periodo_atual['data_inicio'], periodo_atual['data_fim'],
+                 periodo_atual['ano'], periodo_atual['bisemana'], 1750.00, 'ativa', 'Reserva para campanha de lançamento'),
+                (2, 2, periodo_atual['periodo_id'], periodo_atual['data_inicio'], periodo_atual['data_fim'],
+                 periodo_atual['ano'], periodo_atual['bisemana'], 1600.00, 'ativa', 'Reserva para promoção de verão'),
+                (3, 3, periodo_proximo['periodo_id'], periodo_proximo['data_inicio'], periodo_proximo['data_fim'],
+                 periodo_proximo['ano'], periodo_proximo['bisemana'], 1400.00, 'reservada', 'Reserva antecipada - Campanha Q2'),
+                (4, 1, periodo_proximo['periodo_id'], periodo_proximo['data_inicio'], periodo_proximo['data_fim'],
+                 periodo_proximo['ano'], periodo_proximo['bisemana'], 1100.00, 'reservada', 'Reserva para evento corporativo')
+            ]
+
+            for reserva in reservas_exemplo:
+                cursor.execute(
+                    "INSERT INTO reservas_bisemana (placa_id, cliente_id, periodo_id, data_inicio, data_fim, ano, bisemana, valor_periodo, status, observacoes) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    reserva
                 )
 
         conn.commit()
@@ -614,10 +741,13 @@ def login():
             <head>
                 <title>Login - SIG-ME</title>
                 <style>
-                    body { font-family: Arial, sans-serif; padding: 40px; text-align: center; }
-                    .login-box { max-width: 400px; margin: 0 auto; padding: 40px; border: 1px solid #ddd; border-radius: 10px; }
-                    input, button { width: 100%; padding: 10px; margin: 10px 0; }
-                    .error { color: red; margin-top: 10px; }
+                    body { font-family: Arial, sans-serif; padding: 40px; text-align: center; background: linear-gradient(135deg, #00A8E8, #6C63FF); }
+                    .login-box { max-width: 400px; margin: 0 auto; padding: 40px; background: white; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+                    input, button { width: 100%; padding: 12px; margin: 10px 0; border-radius: 8px; border: 1px solid #ddd; }
+                    button { background: #00A8E8; color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; }
+                    button:hover { background: #007EA7; transform: translateY(-2px); }
+                    .error { color: #FF6B6B; margin-top: 10px; padding: 10px; background: #FF6B6B20; border-radius: 5px; }
+                    h1 { color: #00A8E8; }
                 </style>
             </head>
             <body>
@@ -642,9 +772,13 @@ def login():
     <head>
         <title>Login - SIG-ME</title>
         <style>
-            body { font-family: Arial, sans-serif; padding: 40px; text-align: center; }
-            .login-box { max-width: 400px; margin: 0 auto; padding: 40px; border: 1px solid #ddd; border-radius: 10px; }
-            input, button { width: 100%; padding: 10px; margin: 10px 0; }
+            body { font-family: Arial, sans-serif; padding: 40px; text-align: center; background: linear-gradient(135deg, #00A8E8, #6C63FF); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+            .login-box { max-width: 400px; margin: 0 auto; padding: 40px; background: white; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+            input, button { width: 100%; padding: 12px; margin: 10px 0; border-radius: 8px; border: 1px solid #ddd; }
+            button { background: #00A8E8; color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; }
+            button:hover { background: #007EA7; transform: translateY(-2px); }
+            h1 { color: #00A8E8; }
+            p { color: #718096; }
         </style>
     </head>
     <body>
@@ -669,7 +803,915 @@ def logout():
     return redirect('/login')
 
 # =============================================================================
-# MÓDULO DE INVENTÁRIO (COMPLETO)
+# NOVA ROTA: MÓDULO DE RESERVAS BI-SEMANA
+# =============================================================================
+@app.route('/reservas_bisemana')
+def reservas_bisemana():
+    """Página principal das reservas bi-semanais"""
+    if 'user' not in session:
+        return redirect('/login')
+
+    db = DatabaseConnection()
+
+    # Buscar todas as reservas com informações completas
+    reservas = db.execute_query("""
+        SELECT rb.*, p.Codigo_Ativo, p.Endereco, p.Regiao, p.Tipo_Placa,
+               c.Nome_Fantasia as cliente_nome
+        FROM reservas_bisemana rb
+        JOIN placas p ON rb.placa_id = p.id
+        JOIN clientes c ON rb.cliente_id = c.id
+        ORDER BY rb.ano DESC, rb.bisemana DESC, rb.data_inicio DESC
+    """) or []
+
+    # Buscar placas disponíveis
+    placas = db.execute_query("""
+        SELECT id, Codigo_Ativo, Endereco, Regiao, Tipo_Placa, Valor_Mensal
+        FROM placas
+        WHERE Status_Atual IN ('disponível', 'reservado')
+        ORDER BY Regiao, Codigo_Ativo
+    """) or []
+
+    # Buscar clientes
+    clientes = db.execute_query("SELECT id, Nome_Fantasia FROM clientes ORDER BY Nome_Fantasia") or []
+
+    # Obter períodos disponíveis
+    ano_atual = datetime.date.today().year
+    periodos = CalculadoraBisemana.gerar_periodos_ano(ano_atual)
+
+    # Adicionar próximo ano também
+    periodos_proximo_ano = CalculadoraBisemana.gerar_periodos_ano(ano_atual + 1)
+    periodos.extend(periodos_proximo_ano[:8])  # Primeiros 4 meses do próximo ano
+
+    return render_reservas_bisemana_template(session['user'], reservas, placas, clientes, periodos)
+
+@app.route('/reservas_bisemana/nova', methods=['POST'])
+def nova_reserva_bisemana():
+    """Cria uma nova reserva bi-semanal"""
+    if 'user' not in session:
+        return jsonify({'success': False, 'message': 'Não autorizado'})
+
+    try:
+        dados = request.get_json()
+        db = DatabaseConnection()
+
+        # Verificar se a placa já está reservada para este período
+        verificar_reserva = db.execute_query("""
+            SELECT id FROM reservas_bisemana
+            WHERE placa_id = %s AND periodo_id = %s AND status IN ('reservada', 'ativa')
+        """, (dados['placa_id'], dados['periodo_id']))
+
+        if verificar_reserva:
+            return jsonify({'success': False, 'message': 'Esta placa já está reservada para este período!'})
+
+        # Calcular valor do período (14 dias)
+        valor_diario = dados.get('valor_diario', 0)
+        valor_periodo = valor_diario * 14
+
+        # Obter informações do período
+        periodo_info = CalculadoraBisemana.obter_periodo_por_id(dados['periodo_id'])
+        if not periodo_info:
+            return jsonify({'success': False, 'message': 'Período inválido! Formato correto: 2024_B01'})
+
+        query = """
+            INSERT INTO reservas_bisemana
+            (placa_id, cliente_id, periodo_id, data_inicio, data_fim, ano, bisemana, valor_periodo, status, observacoes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        params = (
+            dados['placa_id'],
+            dados['cliente_id'],
+            dados['periodo_id'],
+            periodo_info['data_inicio'],
+            periodo_info['data_fim'],
+            periodo_info['ano'],
+            periodo_info['bisemana'],
+            valor_periodo,
+            dados.get('status', 'reservada'),
+            dados.get('observacoes', '')
+        )
+
+        success = db.execute_update(query, params)
+
+        if success:
+            return jsonify({'success': True, 'message': 'Reserva criada com sucesso!'})
+        else:
+            return jsonify({'success': False, 'message': 'Erro ao criar reserva'})
+
+    except Exception as e:
+        logging.error(f"❌ Erro ao criar reserva bi-semanal: {e}")
+        return jsonify({'success': False, 'message': f'Erro: {str(e)}'})
+
+@app.route('/reservas_bisemana/editar', methods=['POST'])
+def editar_reserva_bisemana():
+    """Edita uma reserva bi-semanal existente"""
+    if 'user' not in session:
+        return jsonify({'success': False, 'message': 'Não autorizado'})
+
+    try:
+        dados = request.get_json()
+        db = DatabaseConnection()
+
+        # Verificar se outra reserva conflita (exceto a atual)
+        verificar_reserva = db.execute_query("""
+            SELECT id FROM reservas_bisemana
+            WHERE placa_id = %s AND periodo_id = %s AND status IN ('reservada', 'ativa') AND id != %s
+        """, (dados['placa_id'], dados['periodo_id'], dados['id']))
+
+        if verificar_reserva:
+            return jsonify({'success': False, 'message': 'Esta placa já está reservada para este período!'})
+
+        query = """
+            UPDATE reservas_bisemana
+            SET status = %s, valor_periodo = %s, observacoes = %s
+            WHERE id = %s
+        """
+        params = (
+            dados['status'],
+            dados['valor_periodo'],
+            dados.get('observacoes', ''),
+            dados['id']
+        )
+
+        success = db.execute_update(query, params)
+
+        if success:
+            return jsonify({'success': True, 'message': 'Reserva atualizada com sucesso!'})
+        else:
+            return jsonify({'success': False, 'message': 'Erro ao atualizar reserva'})
+
+    except Exception as e:
+        logging.error(f"❌ Erro ao editar reserva bi-semanal: {e}")
+        return jsonify({'success': False, 'message': f'Erro: {str(e)}'})
+
+@app.route('/reservas_bisemana/excluir/<int:reserva_id>', methods=['DELETE'])
+def excluir_reserva_bisemana(reserva_id):
+    """Exclui uma reserva bi-semanal"""
+    if 'user' not in session:
+        return jsonify({'success': False, 'message': 'Não autorizado'})
+
+    try:
+        db = DatabaseConnection()
+
+        query = "DELETE FROM reservas_bisemana WHERE id = %s"
+        success = db.execute_update(query, (reserva_id,))
+
+        if success:
+            return jsonify({'success': True, 'message': 'Reserva excluída com sucesso!'})
+        else:
+            return jsonify({'success': False, 'message': 'Erro ao excluir reserva'})
+
+    except Exception as e:
+        logging.error(f"❌ Erro ao excluir reserva bi-semanal: {e}")
+        return jsonify({'success': False, 'message': f'Erro: {str(e)}'})
+
+def render_reservas_bisemana_template(user, reservas, placas, clientes, periodos):
+    """Renderiza o template de reservas bi-semanais"""
+
+    # Converter para JSON serializable
+    def convert_to_serializable(obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        elif isinstance(obj, datetime.date):
+            return obj.isoformat()
+        elif isinstance(obj, dict):
+            return {key: convert_to_serializable(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_to_serializable(item) for item in obj]
+        else:
+            return obj
+
+    reservas_serializable = convert_to_serializable(reservas)
+    placas_serializable = convert_to_serializable(placas)
+    clientes_serializable = convert_to_serializable(clientes)
+    periodos_serializable = convert_to_serializable(periodos)
+
+    reservas_html = ""
+    for reserva in reservas:
+        status_class = reserva['status'].lower().replace('ç', 'c').replace('ã', 'a')
+        reservas_html += f"""
+        <div class="reserva-card {status_class}">
+            <div class="reserva-header">
+                <h4>📅 {reserva['periodo_id']} - {reserva['Codigo_Ativo']}</h4>
+                <span class="status-badge {status_class}">{reserva['status']}</span>
+            </div>
+            <div class="reserva-info">
+                <p><strong>📍 Placa:</strong> {reserva['Codigo_Ativo']} - {reserva['Endereco']}</p>
+                <p><strong>🏙️ Região:</strong> {reserva['Regiao']} | <strong>Tipo:</strong> {reserva['Tipo_Placa']}</p>
+                <p><strong>👥 Cliente:</strong> {reserva['cliente_nome']}</p>
+                <p><strong>📅 Período:</strong> {reserva['data_inicio']} a {reserva['data_fim']} (14 dias)</p>
+                <p><strong>💰 Valor:</strong> R$ {reserva['valor_periodo']:,.2f}</p>
+                <p><strong>📝 Observações:</strong> {reserva['observacoes'] or 'Sem observações'}</p>
+            </div>
+            <div class="reserva-actions">
+                <button class="btn-action" onclick="editarReserva({reserva['id']})">✏️ Editar</button>
+                <button class="btn-action" onclick="excluirReserva({reserva['id']})">🗑️ Excluir</button>
+            </div>
+        </div>
+        """
+
+    # MODIFICAÇÃO: Lista de períodos sugeridos em vez de select
+    periodos_sugeridos = ""
+    for periodo in periodos[:12]:  # Mostrar apenas 12 períodos
+        periodos_sugeridos += f"<li onclick=\"document.getElementById('periodo_id').value = '{periodo['periodo_id']}'; atualizarInfoPeriodoDigitavel()\">{periodo['periodo_id']} - {periodo['descricao']}</li>"
+
+    return f'''<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reservas Bi-Semana - SIG-ME</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, {CORES_FORMATO['claro']} 0%, #E3F2FD 100%);
+            color: {CORES_FORMATO['texto']};
+            min-height: 100vh;
+        }}
+        .header {{
+            background: {CORES_FORMATO['branco']};
+            padding: 20px 30px;
+            box-shadow: 0 2px 20px rgba(0, 0, 0, 0.08);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 4px solid {CORES_FORMATO['destaque']};
+        }}
+        .logo h1 {{
+            color: {CORES_FORMATO['primaria']};
+            font-size: 24px;
+            font-weight: 700;
+        }}
+        .user-info {{
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            color: {CORES_FORMATO['texto']};
+            font-weight: 500;
+        }}
+        .btn-logout {{
+            background: {CORES_FORMATO['destaque']};
+            color: {CORES_FORMATO['branco']};
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }}
+        .btn-logout:hover {{
+            background: {CORES_FORMATO['alerta']};
+            transform: translateY(-2px);
+        }}
+        .container {{
+            max-width: 1400px;
+            margin: 30px auto;
+            padding: 0 25px;
+        }}
+        .navigation {{
+            display: flex;
+            gap: 12px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }}
+        .nav-btn {{
+            background: {CORES_FORMATO['primaria']};
+            color: {CORES_FORMATO['branco']};
+            padding: 14px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .nav-btn:hover {{
+            background: {CORES_FORMATO['secundaria']};
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 168, 232, 0.2);
+        }}
+        .nav-btn.active {{
+            background: {CORES_FORMATO['destaque']};
+        }}
+        .content {{
+            background: {CORES_FORMATO['branco']};
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+        }}
+        .section-title {{
+            font-size: 24px;
+            font-weight: 700;
+            color: {CORES_FORMATO['primaria']};
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid {CORES_FORMATO['claro']};
+        }}
+        .reservas-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }}
+        .reserva-card {{
+            background: {CORES_FORMATO['branco']};
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid {CORES_FORMATO['claro']};
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }}
+        .reserva-card:hover {{
+            transform: translateY(-5px);
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }}
+        .reserva-card.reservada {{ border-left: 4px solid {CORES_FORMATO['alerta']}; }}
+        .reserva-card.ativa {{ border-left: 4px solid {CORES_FORMATO['sucesso']}; }}
+        .reserva-card.concluída {{ border-left: 4px solid {CORES_FORMATO['info']}; }}
+        .reserva-card.cancelada {{ border-left: 4px solid {CORES_FORMATO['destaque']}; }}
+        .reserva-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid {CORES_FORMATO['claro']};
+        }}
+        .reserva-actions {{
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }}
+        .btn-action {{
+            background: {CORES_FORMATO['primaria']};
+            color: {CORES_FORMATO['branco']};
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            flex: 1;
+            transition: all 0.3s;
+        }}
+        .btn-action:hover {{
+            background: {CORES_FORMATO['secundaria']};
+            transform: translateY(-2px);
+        }}
+        .status-badge {{
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        .status-badge.reservada {{ background: {CORES_FORMATO['alerta']}20; color: {CORES_FORMATO['alerta']}; }}
+        .status-badge.ativa {{ background: {CORES_FORMATO['sucesso']}20; color: {CORES_FORMATO['sucesso']}; }}
+        .status-badge.concluída {{ background: {CORES_FORMATO['info']}20; color: {CORES_FORMATO['info']}; }}
+        .status-badge.cancelada {{ background: {CORES_FORMATO['destaque']}20; color: {CORES_FORMATO['destaque']}; }}
+        .reserva-info p {{
+            margin: 8px 0;
+            font-size: 14px;
+        }}
+        .btn-nova-reserva {{
+            background: linear-gradient(135deg, {CORES_FORMATO['sucesso']}, {CORES_FORMATO['info']});
+            color: {CORES_FORMATO['branco']};
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            transition: all 0.3s;
+            box-shadow: 0 4px 10px rgba(78, 205, 196, 0.3);
+        }}
+        .btn-nova-reserva:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 6px 15px rgba(78, 205, 196, 0.4);
+        }}
+        .alert {{
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+            font-weight: 500;
+        }}
+        .alert.success {{
+            background: {CORES_FORMATO['sucesso']}20;
+            color: {CORES_FORMATO['sucesso']};
+            border: 1px solid {CORES_FORMATO['sucesso']};
+        }}
+        .alert.error {{
+            background: {CORES_FORMATO['destaque']}20;
+            color: {CORES_FORMATO['destaque']};
+            border: 1px solid {CORES_FORMATO['destaque']};
+        }}
+        /* MODAL STYLES */
+        .modal {{
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            overflow-y: auto;
+        }}
+        .modal-content {{
+            background-color: {CORES_FORMATO['branco']};
+            margin: 5% auto;
+            padding: 30px;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 600px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            max-height: 85vh;
+            overflow-y: auto;
+        }}
+        .modal-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid {CORES_FORMATO['claro']};
+        }}
+        .close {{
+            color: {CORES_FORMATO['texto_claro']};
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }}
+        .close:hover {{
+            color: {CORES_FORMATO['destaque']};
+        }}
+        .form-group {{
+            margin-bottom: 20px;
+        }}
+        .form-group label {{
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: {CORES_FORMATO['primaria']};
+        }}
+        .form-group input, .form-group select, .form-group textarea {{
+            width: 100%;
+            padding: 10px;
+            border: 1px solid {CORES_FORMATO['claro']};
+            border-radius: 5px;
+            font-size: 14px;
+        }}
+        .form-group textarea {{
+            height: 80px;
+            resize: vertical;
+        }}
+        .form-actions {{
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid {CORES_FORMATO['claro']};
+        }}
+        .btn-cancelar {{
+            background: {CORES_FORMATO['texto_claro']};
+            color: {CORES_FORMATO['branco']};
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }}
+        .btn-salvar {{
+            background: linear-gradient(135deg, {CORES_FORMATO['sucesso']}, {CORES_FORMATO['info']});
+            color: {CORES_FORMATO['branco']};
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }}
+        .btn-cancelar:hover {{
+            background: {CORES_FORMATO['secundaria']};
+            transform: translateY(-2px);
+        }}
+        .btn-salvar:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(78, 205, 196, 0.3);
+        }}
+        .periodo-info {{
+            background: {CORES_FORMATO['claro']};
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }}
+        .periodo-info p {{
+            margin: 5px 0;
+            font-size: 14px;
+        }}
+        .periodo-sugeridos {{
+            background: {CORES_FORMATO['claro']};
+            border: 1px solid {CORES_FORMATO['claro']};
+            border-radius: 5px;
+            max-height: 150px;
+            overflow-y: auto;
+            margin-top: 5px;
+            display: none;
+        }}
+        .periodo-sugeridos ul {{
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }}
+        .periodo-sugeridos li {{
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid {CORES_FORMATO['claro']};
+        }}
+        .periodo-sugeridos li:hover {{
+            background: {CORES_FORMATO['primaria']}20;
+            color: {CORES_FORMATO['primaria']};
+        }}
+        .periodo-sugeridos li:last-child {{
+            border-bottom: none;
+        }}
+        .info-helper {{
+            font-size: 12px;
+            color: {CORES_FORMATO['texto_claro']};
+            margin-top: 5px;
+        }}
+        .periodo-input-container {{
+            position: relative;
+        }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">
+            <h1>🚀 SIG-ME - Reservas Bi-Semana</h1>
+        </div>
+        <div class="user-info">
+            <span>👋 Olá, {user['nome']} <small>({user['perfil']})</small></span>
+            <a href="/logout" class="btn-logout">🚪 Sair</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="navigation">
+            <a href="/inventario" class="nav-btn">📋 Inventário</a>
+            <a href="/relatorios" class="nav-btn">📊 Power BI</a>
+            <a href="/comercial" class="nav-btn">💼 Comercial</a>
+            <a href="/contratos" class="nav-btn">📑 Contratos</a>
+            <a href="/reservas_bisemana" class="nav-btn active">📅 Reservas Bi-Semana</a>
+            <a href="/exportar_dados" class="nav-btn">📥 Exportar Dados</a>
+        </div>
+
+        <div class="content">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 class="section-title">📅 Módulo de Reservas Bi-Semana (14 em 14 dias)</h2>
+                <button class="btn-nova-reserva" onclick="abrirModalNovaReserva()">➕ Nova Reserva</button>
+            </div>
+            <div id="alert-container"></div>
+
+            <div class="reservas-grid">
+                {reservas_html if reservas_html else '<p>Nenhuma reserva cadastrada</p>'}
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Nova/Editar Reserva -->
+    <div id="modalReserva" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTituloReserva">Nova Reserva Bi-Semana</h3>
+                <span class="close" onclick="fecharModalReserva()">&times;</span>
+            </div>
+            <form id="formReserva">
+                <input type="hidden" id="reserva_id" name="reserva_id">
+
+                <div class="form-group">
+                    <label for="placa_id">Placa:</label>
+                    <select id="placa_id" name="placa_id" required onchange="atualizarValorDiario()">
+                        <option value="">Selecione uma placa</option>
+                        {"".join([f'<option value="{placa["id"]}" data-valor="{placa["Valor_Mensal"]/30:.2f}">{placa["Codigo_Ativo"]} - {placa["Endereco"]} ({placa["Regiao"]})</option>' for placa in placas])}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="cliente_id">Cliente:</label>
+                    <select id="cliente_id" name="cliente_id" required>
+                        <option value="">Selecione um cliente</option>
+                        {"".join([f'<option value="{cliente["id"]}">{cliente["Nome_Fantasia"]}</option>' for cliente in clientes])}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="periodo_id">Período Bi-Semana (14 dias):</label>
+                    <div class="periodo-input-container">
+                        <input type="text" id="periodo_id" name="periodo_id" required
+                               placeholder="Digite o período (ex: 2024_B01)"
+                               oninput="mostrarSugestoes(this.value)"
+                               onfocus="mostrarSugestoes(this.value)">
+                        <div class="info-helper">Formato: ANO_BXX (ex: 2024_B01, 2024_B02)</div>
+                        <div id="periodoSugeridos" class="periodo-sugeridos">
+                            <ul>
+                                {periodos_sugeridos}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="periodoInfo" class="periodo-info" style="display: none;">
+                    <p><strong>Período selecionado:</strong> <span id="periodoDescricao"></span></p>
+                    <p><strong>Duração:</strong> 14 dias</p>
+                </div>
+
+                <div class="form-group">
+                    <label for="valor_diario">Valor Diário (R$):</label>
+                    <input type="number" id="valor_diario" name="valor_diario" step="0.01" min="0" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="valor_periodo">Valor do Período (14 dias):</label>
+                    <input type="number" id="valor_periodo" name="valor_periodo" step="0.01" min="0" readonly style="background-color: #f0f0f0;">
+                </div>
+
+                <div class="form-group">
+                    <label for="status">Status:</label>
+                    <select id="status" name="status" required>
+                        <option value="reservada">Reservada</option>
+                        <option value="ativa">Ativa</option>
+                        <option value="concluída">Concluída</option>
+                        <option value="cancelada">Cancelada</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="observacoes">Observações:</label>
+                    <textarea id="observacoes" name="observacoes" placeholder="Observações sobre a reserva..."></textarea>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-cancelar" onclick="fecharModalReserva()">Cancelar</button>
+                    <button type="submit" class="btn-salvar">💾 Salvar Reserva</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let reservaEditando = null;
+        const reservas = {json.dumps(reservas_serializable)};
+        const placas = {json.dumps(placas_serializable)};
+        const clientes = {json.dumps(clientes_serializable)};
+        const periodos = {json.dumps(periodos_serializable)};
+
+        function abrirModalNovaReserva() {{
+            document.getElementById('modalTituloReserva').textContent = 'Nova Reserva Bi-Semana';
+            document.getElementById('formReserva').reset();
+            document.getElementById('reserva_id').value = '';
+            document.getElementById('periodoInfo').style.display = 'none';
+            document.getElementById('periodoSugeridos').style.display = 'none';
+            reservaEditando = null;
+            document.getElementById('modalReserva').style.display = 'block';
+
+            // Definir valor diário padrão
+            atualizarValorDiario();
+        }}
+
+        function fecharModalReserva() {{
+            document.getElementById('modalReserva').style.display = 'none';
+            document.getElementById('periodoSugeridos').style.display = 'none';
+        }}
+
+        function editarReserva(reservaId) {{
+            const reserva = reservas.find(r => r.id === reservaId);
+
+            if (reserva) {{
+                document.getElementById('modalTituloReserva').textContent = 'Editar Reserva Bi-Semana';
+                document.getElementById('reserva_id').value = reserva.id;
+                document.getElementById('placa_id').value = reserva.placa_id;
+                document.getElementById('cliente_id').value = reserva.cliente_id;
+                document.getElementById('periodo_id').value = reserva.periodo_id;
+                document.getElementById('valor_diario').value = (reserva.valor_periodo / 14).toFixed(2);
+                document.getElementById('valor_periodo').value = reserva.valor_periodo;
+                document.getElementById('status').value = reserva.status;
+                document.getElementById('observacoes').value = reserva.observacoes || '';
+
+                // Atualizar informações do período
+                atualizarInfoPeriodoDigitavel();
+                reservaEditando = reserva;
+                document.getElementById('modalReserva').style.display = 'block';
+            }}
+        }}
+
+        function excluirReserva(reservaId) {{
+            if (confirm('Tem certeza que deseja excluir esta reserva?')) {{
+                fetch('/reservas_bisemana/excluir/' + reservaId, {{ method: 'DELETE' }})
+                    .then(response => response.json())
+                    .then(data => {{
+                        if (data.success) {{
+                            mostrarAlert(data.message, 'success');
+                            setTimeout(() => location.reload(), 1500);
+                        }} else {{
+                            mostrarAlert(data.message, 'error');
+                        }}
+                    }})
+                    .catch(error => {{
+                        console.error('Erro:', error);
+                        mostrarAlert('Erro ao excluir reserva', 'error');
+                    }});
+            }}
+        }}
+
+        function atualizarValorDiario() {{
+            const placaSelect = document.getElementById('placa_id');
+            const valorDiarioInput = document.getElementById('valor_diario');
+
+            if (placaSelect.value) {{
+                const selectedOption = placaSelect.options[placaSelect.selectedIndex];
+                const valorMensal = parseFloat(selectedOption.getAttribute('data-valor')) || 0;
+                valorDiarioInput.value = valorMensal.toFixed(2);
+                calcularValorPeriodo();
+            }}
+        }}
+
+        function atualizarInfoPeriodoDigitavel() {{
+            const periodoInput = document.getElementById('periodo_id');
+            const periodoInfo = document.getElementById('periodoInfo');
+            const periodoDescricao = document.getElementById('periodoDescricao');
+
+            const periodoId = periodoInput.value.trim();
+
+            if (periodoId) {{
+                // Tentar encontrar o período na lista
+                const periodoEncontrado = periodos.find(p => p.periodo_id === periodoId);
+                if (periodoEncontrado) {{
+                    periodoDescricao.textContent = periodoEncontrado.descricao;
+                    periodoInfo.style.display = 'block';
+                }} else {{
+                    // Verificar se o formato é válido
+                    const regex = /^\d{4}_B\d{2}$/;
+                    if (regex.test(periodoId)) {{
+                        periodoDescricao.textContent = 'Período válido - datas serão calculadas';
+                        periodoInfo.style.display = 'block';
+                    }} else {{
+                        periodoInfo.style.display = 'none';
+                    }}
+                }}
+            }} else {{
+                periodoInfo.style.display = 'none';
+            }}
+        }}
+
+        function mostrarSugestoes(valor) {{
+            const sugeridosDiv = document.getElementById('periodoSugeridos');
+            const lista = sugeridosDiv.querySelector('ul');
+
+            if (valor.length > 0) {{
+                // Filtrar períodos que começam com o valor digitado
+                const filtrados = periodos.filter(p =>
+                    p.periodo_id.toLowerCase().includes(valor.toLowerCase()) ||
+                    p.descricao.toLowerCase().includes(valor.toLowerCase())
+                );
+
+                if (filtrados.length > 0) {{
+                    lista.innerHTML = filtrados.map(p =>
+                        `<li onclick="document.getElementById('periodo_id').value = '${{p.periodo_id}}'; atualizarInfoPeriodoDigitavel(); sugeridosDiv.style.display = 'none'">${{p.periodo_id}} - ${{p.descricao}}</li>`
+                    ).join('');
+                    sugeridosDiv.style.display = 'block';
+                }} else {{
+                    sugeridosDiv.style.display = 'none';
+                }}
+            }} else {{
+                // Mostrar todos os períodos se não houver valor
+                lista.innerHTML = `{periodos_sugeridos}`;
+                sugeridosDiv.style.display = 'block';
+            }}
+
+            // Atualizar informações do período
+            atualizarInfoPeriodoDigitavel();
+        }}
+
+        function calcularValorPeriodo() {{
+            const valorDiario = parseFloat(document.getElementById('valor_diario').value) || 0;
+            const valorPeriodo = valorDiario * 14;
+            document.getElementById('valor_periodo').value = valorPeriodo.toFixed(2);
+        }}
+
+        function mostrarAlert(mensagem, tipo) {{
+            const alertContainer = document.getElementById('alert-container');
+            const alert = document.createElement('div');
+            alert.className = 'alert ' + tipo;
+            alert.textContent = mensagem;
+            alertContainer.appendChild(alert);
+
+            setTimeout(() => {{
+                alert.remove();
+            }}, 5000);
+        }}
+
+        // Event listeners
+        document.getElementById('valor_diario').addEventListener('input', calcularValorPeriodo);
+        document.getElementById('periodo_id').addEventListener('input', function() {{
+            atualizarInfoPeriodoDigitavel();
+            mostrarSugestoes(this.value);
+        }});
+        document.getElementById('placa_id').addEventListener('change', atualizarValorDiario);
+
+        // Fechar sugestões ao clicar fora
+        document.addEventListener('click', function(event) {{
+            const sugeridosDiv = document.getElementById('periodoSugeridos');
+            const periodoInput = document.getElementById('periodo_id');
+
+            if (!periodoInput.contains(event.target) && !sugeridosDiv.contains(event.target)) {{
+                sugeridosDiv.style.display = 'none';
+            }}
+        }});
+
+        // Envio do formulário
+        document.getElementById('formReserva').addEventListener('submit', function(e) {{
+            e.preventDefault();
+
+            const formData = new FormData(this);
+            const reservaId = document.getElementById('reserva_id').value;
+
+            const dados = {{
+                placa_id: parseInt(document.getElementById('placa_id').value),
+                cliente_id: parseInt(document.getElementById('cliente_id').value),
+                periodo_id: document.getElementById('periodo_id').value,
+                valor_diario: parseFloat(document.getElementById('valor_diario').value),
+                valor_periodo: parseFloat(document.getElementById('valor_periodo').value),
+                status: document.getElementById('status').value,
+                observacoes: document.getElementById('observacoes').value
+            }};
+
+            // Adicionar ID se estiver editando
+            if (reservaId) {{
+                dados.id = parseInt(reservaId);
+            }}
+
+            const url = reservaId ? '/reservas_bisemana/editar' : '/reservas_bisemana/nova';
+
+            fetch(url, {{
+                method: 'POST',
+                headers: {{
+                    'Content-Type': 'application/json',
+                }},
+                body: JSON.stringify(dados)
+            }})
+            .then(response => response.json())
+            .then(data => {{
+                if (data.success) {{
+                    mostrarAlert(data.message, 'success');
+                    fecharModalReserva();
+                    setTimeout(() => location.reload(), 1500);
+                }} else {{
+                    mostrarAlert(data.message, 'error');
+                }}
+            }})
+            .catch(error => {{
+                console.error('Erro:', error);
+                mostrarAlert('Erro ao salvar reserva', 'error');
+            }});
+        }});
+
+        // Fechar modal ao clicar fora
+        window.onclick = function(event) {{
+            const modal = document.getElementById('modalReserva');
+            if (event.target === modal) {{
+                fecharModalReserva();
+            }}
+        }}
+
+        // Inicializar
+        window.onload = function() {{
+            // Adicionar link de reservas no menu de outras páginas
+            const menus = document.querySelectorAll('.navigation');
+            menus.forEach(menu => {{
+                if (!menu.querySelector('a[href="/reservas_bisemana"]')) {{
+                    const reservaLink = document.createElement('a');
+                    reservaLink.href = '/reservas_bisemana';
+                    reservaLink.className = 'nav-btn';
+                    reservaLink.innerHTML = '📅 Reservas Bi-Semana';
+                    menu.appendChild(reservaLink);
+                }}
+            }});
+        }};
+    </script>
+</body>
+</html>
+'''
+
+# =============================================================================
+# MÓDULO DE INVENTÁRIO (COMPLETO) - ADICIONAR LINK PARA RESERVAS
 # =============================================================================
 @app.route('/inventario')
 def inventario():
@@ -831,8 +1873,9 @@ def detalhes_placa(codigo_placa):
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: {CORES_FORMATO['claro']};
+            background: linear-gradient(135deg, {CORES_FORMATO['claro']} 0%, #E3F2FD 100%);
             color: {CORES_FORMATO['texto']};
+            min-height: 100vh;
         }}
         .header {{
             background: {CORES_FORMATO['branco']};
@@ -900,7 +1943,7 @@ def detalhes_placa(codigo_placa):
         .nav-btn:hover {{
             background: {CORES_FORMATO['secundaria']};
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(26, 54, 93, 0.2);
+            box-shadow: 0 4px 12px rgba(0, 168, 232, 0.2);
         }}
         .content {{
             background: {CORES_FORMATO['branco']};
@@ -962,9 +2005,14 @@ def detalhes_placa(codigo_placa):
             text-decoration: none;
             display: inline-block;
             font-weight: 600;
+            transition: all 0.3s;
+        }}
+        .btn-voltar:hover {{
+            background: {CORES_FORMATO['secundaria']};
+            transform: translateY(-2px);
         }}
         .btn-salvar {{
-            background: {CORES_FORMATO['sucesso']};
+            background: linear-gradient(135deg, {CORES_FORMATO['sucesso']}, {CORES_FORMATO['info']});
             color: {CORES_FORMATO['branco']};
             padding: 12px 24px;
             border: none;
@@ -973,6 +2021,11 @@ def detalhes_placa(codigo_placa):
             font-size: 14px;
             font-weight: 600;
             margin-left: 10px;
+            transition: all 0.3s;
+        }}
+        .btn-salvar:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(78, 205, 196, 0.3);
         }}
         .form-group {{
             margin-bottom: 20px;
@@ -1006,6 +2059,7 @@ def detalhes_placa(codigo_placa):
     <div class="container">
         <div class="navigation">
             <a href="/inventario" class="nav-btn">📋 Voltar ao Inventário</a>
+            <a href="/reservas_bisemana" class="nav-btn">📅 Ver Reservas</a>
         </div>
 
         <div class="content">
@@ -1187,36 +2241,6 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
 
     placas_serializable = convert_to_serializable(placas)
 
-    # CORREÇÃO: Template string JavaScript corrigida
-    template_js = """
-    placasFiltradas.forEach(placa => {
-        const status_class = placa.Status_Atual.toLowerCase().replace('ç', 'c').replace('ã', 'a');
-        const cliente = placa.Cliente_Locacao || 'Sem locação';
-
-        placasGrid.innerHTML += `
-        <div class="placa-card ${status_class}">
-            <div class="placa-header">
-                <h4>📋 ${placa.Codigo_Ativo}</h4>
-                <span class="status-badge ${status_class}">${placa.Status_Atual}</span>
-            </div>
-            <div class="placa-info">
-                <p><strong>📍 Endereço:</strong> ${placa.Endereco}</p>
-                <p><strong>🏙️ Região:</strong> ${placa.Regiao}</p>
-                <p><strong>📺 Tipo:</strong> ${placa.Tipo_Placa}</p>
-                <p><strong>👥 Cliente:</strong> ${cliente}</p>
-                <p><strong>💰 Valor:</strong> R$ ${placa.Valor_Mensal.toFixed(2).replace('.', ',')}</p>
-                <p><strong>📅 Cadastro:</strong> ${placa.Data_Cadastro}</p>
-            </div>
-            <div class="placa-actions">
-                <button class="btn-action" onclick="editarPlaca('${placa.Codigo_Ativo}')">✏️ Editar</button>
-                <button class="btn-action" onclick="detalhesPlaca('${placa.Codigo_Ativo}')">👁️ Detalhes</button>
-                <button class="btn-action btn-excluir" onclick="excluirPlaca('${placa.Codigo_Ativo}')">🗑️ Excluir</button>
-            </div>
-        </div>
-        `;
-    });
-    """
-
     return f'''<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1227,8 +2251,9 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: {CORES_FORMATO['claro']};
+            background: linear-gradient(135deg, {CORES_FORMATO['claro']} 0%, #E3F2FD 100%);
             color: {CORES_FORMATO['texto']};
+            min-height: 100vh;
         }}
         .header {{
             background: {CORES_FORMATO['branco']};
@@ -1296,7 +2321,7 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
         .nav-btn:hover {{
             background: {CORES_FORMATO['secundaria']};
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(26, 54, 93, 0.2);
+            box-shadow: 0 4px 12px rgba(0, 168, 232, 0.2);
         }}
         .nav-btn.active {{
             background: {CORES_FORMATO['destaque']};
@@ -1322,11 +2347,16 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
             margin-bottom: 30px;
         }}
         .metric-card {{
-            background: {CORES_FORMATO['claro']};
+            background: linear-gradient(135deg, {CORES_FORMATO['claro']}, {CORES_FORMATO['branco']});
             padding: 20px;
             border-radius: 8px;
             text-align: center;
             border-left: 4px solid {CORES_FORMATO['info']};
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            transition: transform 0.3s;
+        }}
+        .metric-card:hover {{
+            transform: translateY(-5px);
         }}
         .metric-value {{
             font-size: 28px;
@@ -1346,9 +2376,10 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
             margin-top: 30px;
         }}
         .card {{
-            background: {CORES_FORMATO['claro']};
+            background: linear-gradient(135deg, {CORES_FORMATO['claro']}, {CORES_FORMATO['branco']});
             padding: 25px;
             border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
         }}
         .card h3 {{
             color: {CORES_FORMATO['primaria']};
@@ -1365,10 +2396,12 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
             align-items: center;
             cursor: pointer;
             transition: all 0.3s;
+            border: 1px solid {CORES_FORMATO['claro']};
         }}
         .distribuicao-item:hover {{
             background: {CORES_FORMATO['info']}20;
             transform: translateX(5px);
+            border-color: {CORES_FORMATO['info']};
         }}
         .regiao-nome {{
             font-weight: 600;
@@ -1392,6 +2425,11 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
             border-radius: 10px;
             border: 1px solid {CORES_FORMATO['claro']};
             box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }}
+        .placa-card:hover {{
+            transform: translateY(-5px);
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
         }}
         .placa-card.disponivel {{ border-left: 4px solid {CORES_FORMATO['sucesso']}; }}
         .placa-card.locado {{ border-left: 4px solid {CORES_FORMATO['destaque']}; }}
@@ -1436,9 +2474,11 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
             cursor: pointer;
             font-size: 12px;
             flex: 1;
+            transition: all 0.3s;
         }}
         .btn-action:hover {{
             background: {CORES_FORMATO['secundaria']};
+            transform: translateY(-2px);
         }}
         .btn-excluir {{
             background: {CORES_FORMATO['destaque']};
@@ -1447,7 +2487,7 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
             background: #c53030;
         }}
         .btn-nova-placa {{
-            background: {CORES_FORMATO['sucesso']};
+            background: linear-gradient(135deg, {CORES_FORMATO['sucesso']}, {CORES_FORMATO['info']});
             color: {CORES_FORMATO['branco']};
             padding: 12px 24px;
             border: none;
@@ -1457,10 +2497,11 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
             font-weight: 600;
             margin-bottom: 20px;
             transition: all 0.3s;
+            box-shadow: 0 4px 10px rgba(78, 205, 196, 0.3);
         }}
         .btn-nova-placa:hover {{
-            background: {CORES_FORMATO['info']};
             transform: translateY(-2px);
+            box-shadow: 0 6px 15px rgba(78, 205, 196, 0.4);
         }}
         .alert {{
             padding: 15px;
@@ -1551,21 +2592,25 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
             border-radius: 5px;
             cursor: pointer;
             font-weight: 600;
+            transition: all 0.3s;
         }}
         .btn-salvar {{
-            background: {CORES_FORMATO['sucesso']};
+            background: linear-gradient(135deg, {CORES_FORMATO['sucesso']}, {CORES_FORMATO['info']});
             color: {CORES_FORMATO['branco']};
             padding: 12px 24px;
             border: none;
             border-radius: 5px;
             cursor: pointer;
             font-weight: 600;
+            transition: all 0.3s;
         }}
         .btn-cancelar:hover {{
             background: {CORES_FORMATO['secundaria']};
+            transform: translateY(-2px);
         }}
         .btn-salvar:hover {{
-            background: #2f855a;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(78, 205, 196, 0.3);
         }}
     </style>
 </head>
@@ -1583,9 +2628,10 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
     <div class="container">
         <div class="navigation">
             <a href="/inventario" class="nav-btn active">📋 Inventário</a>
-            <a href="/relatorios" class="nav-btn">📊 Relatórios</a>
+            <a href="/relatorios" class="nav-btn">📊 Power BI</a>
             <a href="/comercial" class="nav-btn">💼 Comercial</a>
             <a href="/contratos" class="nav-btn">📑 Contratos</a>
+            <a href="/reservas_bisemana" class="nav-btn">📅 Reservas Bi-Semana</a>
             <a href="/exportar_dados" class="nav-btn">📥 Exportar Dados</a>
         </div>
 
@@ -1856,7 +2902,7 @@ def render_inventario_template(user, placas, metricas, distribuicao_regiao):
 '''
 
 # =============================================================================
-# MÓDULO COMERCIAL (CORRIGIDO)
+# MÓDULO COMERCIAL (CORRIGIDO) - ADICIONAR LINK PARA RESERVAS
 # =============================================================================
 @app.route('/comercial')
 def comercial():
@@ -2048,8 +3094,9 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: {CORES_FORMATO['claro']};
+            background: linear-gradient(135deg, {CORES_FORMATO['claro']} 0%, #E3F2FD 100%);
             color: {CORES_FORMATO['texto']};
+            min-height: 100vh;
         }}
         .header {{
             background: {CORES_FORMATO['branco']};
@@ -2117,7 +3164,7 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
         .nav-btn:hover {{
             background: {CORES_FORMATO['secundaria']};
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(26, 54, 93, 0.2);
+            box-shadow: 0 4px 12px rgba(0, 168, 232, 0.2);
         }}
         .nav-btn.active {{
             background: {CORES_FORMATO['destaque']};
@@ -2143,11 +3190,16 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
             margin-bottom: 30px;
         }}
         .metric-card {{
-            background: {CORES_FORMATO['claro']};
+            background: linear-gradient(135deg, {CORES_FORMATO['claro']}, {CORES_FORMATO['branco']});
             padding: 25px;
             border-radius: 10px;
             text-align: center;
             border-left: 4px solid {CORES_FORMATO['sucesso']};
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            transition: transform 0.3s;
+        }}
+        .metric-card:hover {{
+            transform: translateY(-5px);
         }}
         .metric-value {{
             font-size: 32px;
@@ -2161,10 +3213,11 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
             font-weight: 600;
         }}
         .card {{
-            background: {CORES_FORMATO['claro']};
+            background: linear-gradient(135deg, {CORES_FORMATO['claro']}, {CORES_FORMATO['branco']});
             padding: 25px;
             border-radius: 10px;
             margin-top: 30px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
         }}
         .card h3 {{
             color: {CORES_FORMATO['primaria']};
@@ -2183,6 +3236,11 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
             border-radius: 8px;
             border: 1px solid {CORES_FORMATO['claro']};
             box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }}
+        .cliente-card:hover {{
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
         }}
         .cliente-header {{
             display: flex;
@@ -2202,6 +3260,11 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
             border-radius: 4px;
             cursor: pointer;
             font-size: 12px;
+            transition: all 0.3s;
+        }}
+        .btn-editar-cliente:hover {{
+            background: {CORES_FORMATO['primaria']};
+            transform: translateY(-2px);
         }}
         .btn-excluir-cliente {{
             background: {CORES_FORMATO['destaque']};
@@ -2211,6 +3274,11 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
             border-radius: 4px;
             cursor: pointer;
             font-size: 12px;
+            transition: all 0.3s;
+        }}
+        .btn-excluir-cliente:hover {{
+            background: #c53030;
+            transform: translateY(-2px);
         }}
         .cliente-card h4 {{
             color: {CORES_FORMATO['primaria']};
@@ -2221,7 +3289,7 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
             font-size: 14px;
         }}
         .btn-novo-cliente {{
-            background: {CORES_FORMATO['sucesso']};
+            background: linear-gradient(135deg, {CORES_FORMATO['sucesso']}, {CORES_FORMATO['info']});
             color: {CORES_FORMATO['branco']};
             padding: 12px 24px;
             border: none;
@@ -2231,10 +3299,11 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
             font-weight: 600;
             margin-bottom: 20px;
             transition: all 0.3s;
+            box-shadow: 0 4px 10px rgba(78, 205, 196, 0.3);
         }}
         .btn-novo-cliente:hover {{
-            background: {CORES_FORMATO['info']};
             transform: translateY(-2px);
+            box-shadow: 0 6px 15px rgba(78, 205, 196, 0.4);
         }}
         .modal {{
             display: none;
@@ -2307,21 +3376,25 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
             border-radius: 5px;
             cursor: pointer;
             font-weight: 600;
+            transition: all 0.3s;
         }}
         .btn-salvar {{
-            background: {CORES_FORMATO['sucesso']};
+            background: linear-gradient(135deg, {CORES_FORMATO['sucesso']}, {CORES_FORMATO['info']});
             color: {CORES_FORMATO['branco']};
             padding: 12px 24px;
             border: none;
             border-radius: 5px;
             cursor: pointer;
             font-weight: 600;
+            transition: all 0.3s;
         }}
         .btn-cancelar:hover {{
             background: {CORES_FORMATO['secundaria']};
+            transform: translateY(-2px);
         }}
         .btn-salvar:hover {{
-            background: #2f855a;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(78, 205, 196, 0.3);
         }}
         .alert {{
             padding: 15px;
@@ -2355,9 +3428,10 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
     <div class="container">
         <div class="navigation">
             <a href="/inventario" class="nav-btn">📋 Inventário</a>
-            <a href="/relatorios" class="nav-btn">📊 Relatórios</a>
+            <a href="/relatorios" class="nav-btn">📊 Power BI</a>
             <a href="/comercial" class="nav-btn active">💼 Comercial</a>
             <a href="/contratos" class="nav-btn">📑 Contratos</a>
+            <a href="/reservas_bisemana" class="nav-btn">📅 Reservas Bi-Semana</a>
             <a href="/exportar_dados" class="nav-btn">📥 Exportar Dados</a>
         </div>
 
@@ -2552,7 +3626,7 @@ def render_comercial_template(user, metricas, clientes, placas_ativas):
 '''
 
 # =============================================================================
-# MÓDULO DE CONTRATOS (COMPLETAMENTE CORRIGIDO)
+# MÓDULO DE CONTRATOS (COMPLETAMENTE CORRIGIDO) - ADICIONAR LINK PARA RESERVAS
 # =============================================================================
 @app.route('/contratos')
 def contratos():
@@ -2757,8 +3831,9 @@ def render_contratos_template(user, contratos, clientes, fornecedores):
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: {CORES_FORMATO['claro']};
+            background: linear-gradient(135deg, {CORES_FORMATO['claro']} 0%, #E3F2FD 100%);
             color: {CORES_FORMATO['texto']};
+            min-height: 100vh;
         }}
         .header {{
             background: {CORES_FORMATO['branco']};
@@ -2826,7 +3901,7 @@ def render_contratos_template(user, contratos, clientes, fornecedores):
         .nav-btn:hover {{
             background: {CORES_FORMATO['secundaria']};
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(26, 54, 93, 0.2);
+            box-shadow: 0 4px 12px rgba(0, 168, 232, 0.2);
         }}
         .nav-btn.active {{
             background: {CORES_FORMATO['destaque']};
@@ -2857,6 +3932,11 @@ def render_contratos_template(user, contratos, clientes, fornecedores):
             border-radius: 10px;
             border: 1px solid {CORES_FORMATO['claro']};
             box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }}
+        .contrato-card:hover {{
+            transform: translateY(-5px);
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
         }}
         .contrato-header {{
             display: flex;
@@ -2878,6 +3958,11 @@ def render_contratos_template(user, contratos, clientes, fornecedores):
             border-radius: 4px;
             cursor: pointer;
             font-size: 12px;
+            transition: all 0.3s;
+        }}
+        .btn-editar:hover {{
+            background: {CORES_FORMATO['primaria']};
+            transform: translateY(-2px);
         }}
         .btn-pdf {{
             background: {CORES_FORMATO['alerta']};
@@ -2887,6 +3972,11 @@ def render_contratos_template(user, contratos, clientes, fornecedores):
             border-radius: 4px;
             cursor: pointer;
             font-size: 12px;
+            transition: all 0.3s;
+        }}
+        .btn-pdf:hover {{
+            background: #f57c00;
+            transform: translateY(-2px);
         }}
         .btn-excluir {{
             background: {CORES_FORMATO['destaque']};
@@ -2896,6 +3986,11 @@ def render_contratos_template(user, contratos, clientes, fornecedores):
             border-radius: 4px;
             cursor: pointer;
             font-size: 12px;
+            transition: all 0.3s;
+        }}
+        .btn-excluir:hover {{
+            background: #c53030;
+            transform: translateY(-2px);
         }}
         .contrato-info p {{
             margin: 8px 0;
@@ -2920,7 +4015,7 @@ def render_contratos_template(user, contratos, clientes, fornecedores):
             color: {CORES_FORMATO['destaque']};
         }}
         .btn-novo-contrato {{
-            background: {CORES_FORMATO['sucesso']};
+            background: linear-gradient(135deg, {CORES_FORMATO['sucesso']}, {CORES_FORMATO['info']});
             color: {CORES_FORMATO['branco']};
             padding: 12px 24px;
             border: none;
@@ -2930,10 +4025,11 @@ def render_contratos_template(user, contratos, clientes, fornecedores):
             font-weight: 600;
             margin-bottom: 20px;
             transition: all 0.3s;
+            box-shadow: 0 4px 10px rgba(78, 205, 196, 0.3);
         }}
         .btn-novo-contrato:hover {{
-            background: {CORES_FORMATO['info']};
             transform: translateY(-2px);
+            box-shadow: 0 6px 15px rgba(78, 205, 196, 0.4);
         }}
         .alert {{
             padding: 15px;
@@ -3027,21 +4123,25 @@ def render_contratos_template(user, contratos, clientes, fornecedores):
             border-radius: 5px;
             cursor: pointer;
             font-weight: 600;
+            transition: all 0.3s;
         }}
         .btn-salvar {{
-            background: {CORES_FORMATO['sucesso']};
+            background: linear-gradient(135deg, {CORES_FORMATO['sucesso']}, {CORES_FORMATO['info']});
             color: {CORES_FORMATO['branco']};
             padding: 12px 24px;
             border: none;
             border-radius: 5px;
             cursor: pointer;
             font-weight: 600;
+            transition: all 0.3s;
         }}
         .btn-cancelar:hover {{
             background: {CORES_FORMATO['secundaria']};
+            transform: translateY(-2px);
         }}
         .btn-salvar:hover {{
-            background: #2f855a;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(78, 205, 196, 0.3);
         }}
         .file-upload {{
             border: 2px dashed {CORES_FORMATO['claro']};
@@ -3069,9 +4169,10 @@ def render_contratos_template(user, contratos, clientes, fornecedores):
     <div class="container">
         <div class="navigation">
             <a href="/inventario" class="nav-btn">📋 Inventário</a>
-            <a href="/relatorios" class="nav-btn">📊 Relatórios</a>
+            <a href="/relatorios" class="nav-btn">📊 Power BI</a>
             <a href="/comercial" class="nav-btn">💼 Comercial</a>
             <a href="/contratos" class="nav-btn active">📑 Contratos</a>
+            <a href="/reservas_bisemana" class="nav-btn">📅 Reservas Bi-Semana</a>
             <a href="/exportar_dados" class="nav-btn">📥 Exportar Dados</a>
         </div>
 
@@ -3335,7 +4436,7 @@ def render_contratos_template(user, contratos, clientes, fornecedores):
 '''
 
 # =============================================================================
-# MÓDULO DE RELATÓRIOS (CORRIGIDO COM EXPORTAÇÃO)
+# MÓDULO DE RELATÓRIOS (CORRIGIDO COM EXPORTAÇÃO) - ADICIONAR LINK PARA RESERVAS
 # =============================================================================
 @app.route('/relatorios')
 def relatorios():
@@ -3355,13 +4456,14 @@ def relatorios():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Relatórios - SIG-ME</title>
+    <title>Power BI - SIG-ME</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: {CORES_FORMATO['claro']};
+            background: linear-gradient(135deg, {CORES_FORMATO['claro']} 0%, #E3F2FD 100%);
             color: {CORES_FORMATO['texto']};
+            min-height: 100vh;
         }}
         .header {{
             background: {CORES_FORMATO['branco']};
@@ -3429,7 +4531,7 @@ def relatorios():
         .nav-btn:hover {{
             background: {CORES_FORMATO['secundaria']};
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(26, 54, 93, 0.2);
+            box-shadow: 0 4px 12px rgba(0, 168, 232, 0.2);
         }}
         .nav-btn.active {{
             background: {CORES_FORMATO['destaque']};
@@ -3448,500 +4550,195 @@ def relatorios():
             padding-bottom: 10px;
             border-bottom: 2px solid {CORES_FORMATO['claro']};
         }}
-        .relatorios-grid {{
+        .powerbi-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
             gap: 25px;
             margin-top: 20px;
         }}
-        .relatorio-card {{
+        .powerbi-card {{
             background: {CORES_FORMATO['claro']};
             padding: 25px;
             border-radius: 10px;
             border: 1px solid {CORES_FORMATO['claro']};
+            text-align: center;
         }}
-        .relatorio-card h3 {{
+        .powerbi-card h3 {{
             color: {CORES_FORMATO['primaria']};
             margin-bottom: 15px;
             font-size: 18px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
         }}
-        .relatorio-item {{
+        .powerbi-embed {{
             background: {CORES_FORMATO['branco']};
-            padding: 15px;
-            border-radius: 6px;
-            margin-bottom: 10px;
-        }}
-        .relatorio-item p {{
-            margin: 5px 0;
-            font-size: 14px;
-        }}
-        .btn-exportar {{
-            background: {CORES_FORMATO['sucesso']};
-            color: {CORES_FORMATO['branco']};
-            padding: 8px 16px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 12px;
-            text-decoration: none;
-            display: inline-block;
-        }}
-        .btn-exportar:hover {{
-            background: {CORES_FORMATO['info']};
-        }}
-        .filtros {{
-            background: {CORES_FORMATO['claro']};
-            padding: 20px;
             border-radius: 8px;
+            padding: 20px;
+            min-height: 400px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }}
+        .powerbi-icon {{
+            font-size: 64px;
+            color: {CORES_FORMATO['primaria']};
             margin-bottom: 20px;
         }}
-        .filtros h4 {{
-            color: {CORES_FORMATO['primaria']};
+        .powerbi-link {{
+            background: linear-gradient(135deg, #00A8E8, #007EA7);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            display: inline-block;
+            margin: 10px;
+            transition: all 0.3s;
+        }}
+        .powerbi-link:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 168, 232, 0.3);
+        }}
+        .info-box {{
+            background: {CORES_FORMATO['sucesso']}20;
+            border: 1px solid {CORES_FORMATO['sucesso']};
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: left;
+        }}
+        .info-box h4 {{
+            color: {CORES_FORMATO['sucesso']};
             margin-bottom: 10px;
-        }}
-        .filtro-group {{
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }}
-        .filtro-group input {{
-            padding: 8px;
-            border: 1px solid {CORES_FORMATO['claro']};
-            border-radius: 4px;
-        }}
-        .btn-filtrar {{
-            background: {CORES_FORMATO['info']};
-            color: {CORES_FORMATO['branco']};
-            padding: 8px 16px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
         }}
     </style>
 </head>
 <body>
     <div class="header">
         <div class="logo">
-            <h1>🚀 SIG-ME - Relatórios</h1>
+            <h1>🚀 SIG-ME - Power BI</h1>
         </div>
         <div class="user-info">
             <span>👋 Olá, {session['user']['nome']} <small>({session['user']['perfil']})</small></span>
             <a href="/logout" class="btn-logout">🚪 Sair</a>
         </div>
-    </div>
+</div>
 
     <div class="container">
         <div class="navigation">
             <a href="/inventario" class="nav-btn">📋 Inventário</a>
-            <a href="/relatorios" class="nav-btn active">📊 Relatórios</a>
+            <a href="/relatorios" class="nav-btn active">📊 Power BI</a>
             <a href="/comercial" class="nav-btn">💼 Comercial</a>
             <a href="/contratos" class="nav-btn">📑 Contratos</a>
+            <a href="/reservas_bisemana" class="nav-btn">📅 Reservas Bi-Semana</a>
             <a href="/exportar_dados" class="nav-btn">📥 Exportar Dados</a>
         </div>
 
         <div class="content">
-            <h2 class="section-title">📊 Módulo de Relatórios</h2>
+            <h2 class="section-title">📊 Dashboard Power BI - SIG-ME</h2>
 
-            <div class="filtros">
-                <h4>🔍 Filtros por Data</h4>
-                <div class="filtro-group">
-                    <label>Data Início:</label>
-                    <input type="date" id="data_inicio">
-                    <label>Data Fim:</label>
-                    <input type="date" id="data_fim">
-                    <button class="btn-filtrar" onclick="aplicarFiltros()">Aplicar Filtros</button>
-                    <button class="btn-filtrar" onclick="limparFiltros()" style="background: {CORES_FORMATO['texto_claro']};">Limpar</button>
+            <div class="info-box">
+                <h4>⚠️ Atenção: Integração Power BI</h4>
+                <p>Para integrar seus dashboards Power BI, siga estas etapas:</p>
+                <ol>
+                    <li>Publique seus relatórios no Power BI Service</li>
+                    <li>Obtenha o link de incorporação (embed)</li>
+                    <li>Substitua os links abaixo pelos seus links reais</li>
+                </ol>
+                <p><strong>Documentação oficial:</strong> <a href="https://learn.microsoft.com/pt-br/power-bi/" target="_blank">Microsoft Power BI Docs</a></p>
+            </div>
+
+            <div class="powerbi-grid">
+                <div class="powerbi-card">
+                    <h3>📈 Dashboard Financeiro</h3>
+                    <div class="powerbi-embed">
+                        <div class="powerbi-icon">📊</div>
+                        <p>Visualize faturamento, despesas e lucratividade em tempo real.</p>
+                        <a href="https://app.powerbi.com/" target="_blank" class="powerbi-link">
+                            🔗 Acessar Dashboard Financeiro
+                        </a>
+                        <p><small>Link de exemplo - Substitua pelo seu link real</small></p>
+                    </div>
+                </div>
+
+                <div class="powerbi-card">
+                    <h3>🏙️ Ocupação por Região</h3>
+                    <div class="powerbi-embed">
+                        <div class="powerbi-icon">📍</div>
+                        <p>Mapas interativos e análises de ocupação por região.</p>
+                        <a href="https://app.powerbi.com/" target="_blank" class="powerbi-link">
+                            🔗 Acessar Dashboard de Ocupação
+                        </a>
+                        <p><small>Link de exemplo - Substitua pelo seu link real</small></p>
+                    </div>
+                </div>
+
+                <div class="powerbi-card">
+                    <h3>📅 Reservas Bi-Semana</h3>
+                    <div class="powerbi-embed">
+                        <div class="powerbi-icon">📅</div>
+                        <p>Calendário interativo e análise de reservas por período.</p>
+                        <a href="https://app.powerbi.com/" target="_blank" class="powerbi-link">
+                            🔗 Acessar Dashboard de Reservas
+                        </a>
+                        <p><small>Link de exemplo - Substitua pelo seu link real</small></p>
+                    </div>
+                </div>
+
+                <div class="powerbi-card">
+                    <h3>👥 Análise de Clientes</h3>
+                    <div class="powerbi-embed">
+                        <div class="powerbi-icon">👥</div>
+                        <p>Segmentação de clientes e análise de ticket médio.</p>
+                        <a href="https://app.powerbi.com/" target="_blank" class="powerbi-link">
+                            🔗 Acessar Dashboard de Clientes
+                        </a>
+                        <p><small>Link de exemplo - Substitua pelo seu link real</small></p>
+                    </div>
                 </div>
             </div>
 
-            <div class="relatorios-grid">
-                <div class="relatorio-card">
-                    <h3>📊 Ocupação por Região
-                        <a href="/relatorios/exportar/ocupacao" class="btn-exportar">📥 Exportar Excel</a>
-                    </h3>
-                    {generate_ocupacao_html(relatorio_ocupacao)}
-                </div>
-
-                <div class="relatorio-card">
-                    <h3>💰 Relatórios Financeiros
-                        <a href="/relatorios/exportar/financeiro" class="btn-exportar">📥 Exportar Excel</a>
-                    </h3>
-                    {generate_financeiro_html(relatorio_financeiro)}
-                </div>
-
-                <div class="relatorio-card">
-                    <h3>🏙️ Resumo por Região
-                        <a href="/relatorios/exportar/inventario" class="btn-exportar">📥 Exportar Excel</a>
-                    </h3>
-                    {generate_regiao_html(relatorio_regiao)}
+            <div style="text-align: center; margin-top: 30px;">
+                <h3>🔗 Links Rápidos para Power BI</h3>
+                <div style="display: flex; justify-content: center; gap: 15px; flex-wrap: wrap; margin-top: 20px;">
+                    <a href="https://powerbi.microsoft.com/pt-br/desktop/" target="_blank" class="powerbi-link">📥 Power BI Desktop</a>
+                    <a href="https://app.powerbi.com/" target="_blank" class="powerbi-link">🌐 Power BI Service</a>
+                    <a href="https://learn.microsoft.com/pt-br/power-bi/" target="_blank" class="powerbi-link">📚 Documentação</a>
+                    <a href="https://community.powerbi.com/" target="_blank" class="powerbi-link">👥 Comunidade</a>
                 </div>
             </div>
         </div>
     </div>
-
-    <script>
-        function aplicarFiltros() {{
-            const dataInicio = document.getElementById('data_inicio').value;
-            const dataFim = document.getElementById('data_fim').value;
-
-            if (dataInicio || dataFim) {{
-                alert('Filtros aplicados!\\nData Início: ' + (dataInicio || 'Não definida') +
-                      '\\nData Fim: ' + (dataFim || 'Não definida') +
-                      '\\n\\nEm ambiente real, os relatórios seriam filtrados por período.');
-            }} else {{
-                alert('Por favor, selecione pelo menos uma data para filtrar.');
-            }}
-        }}
-
-        function limparFiltros() {{
-            document.getElementById('data_inicio').value = '';
-            document.getElementById('data_fim').value = '';
-            alert('Filtros limpos!');
-        }}
-
-        // Definir data padrão para o último mês
-        window.onload = function() {{
-            const hoje = new Date();
-            const umMesAtras = new Date();
-            umMesAtras.setMonth(hoje.getMonth() - 1);
-
-            document.getElementById('data_inicio').value = umMesAtras.toISOString().split('T')[0];
-            document.getElementById('data_fim').value = hoje.toISOString().split('T')[0];
-        }}
-    </script>
 </body>
 </html>
 '''
 
-def generate_ocupacao_html(relatorio_ocupacao):
-    """Gera HTML para relatório de ocupação"""
-    html = ""
-    for regiao, dados in relatorio_ocupacao.items():
-        html += f"""
-        <div class="relatorio-item">
-            <h4>{regiao}</h4>
-            <p><strong>Total:</strong> {sum(item['quantidade'] for item in dados)} placas</p>
-        """
-        for item in dados:
-            html += f"""
-            <p><strong>{item['Status_Atual']}:</strong> {item['quantidade']} placas
-            (Faturamento: R$ {item['faturamento'] or 0:,.2f})</p>
-            """
-        html += "</div>"
-    return html if html else "<p>Nenhum dado disponível</p>"
-
-def generate_financeiro_html(relatorio_financeiro):
-    """Gera HTML para relatório financeiro"""
-    if not relatorio_financeiro:
-        return "<p>Nenhum dado financeiro disponível</p>"
-
-    html = f"""
-    <div class="relatorio-item">
-        <p><strong>Faturamento Total:</strong> R$ {relatorio_financeiro['faturamento_total']:,.2f}</p>
-    </div>
-    """
-
-    html += """
-    <div class="relatorio-item">
-        <h4>Faturamento por Região</h4>
-    """
-    for item in relatorio_financeiro['faturamento_regiao']:
-        html += f"""
-        <p><strong>{item['Regiao']}:</strong> R$ {item['faturamento']:,.2f}</p>
-        """
-    html += "</div>"
-
-    html += """
-    <div class="relatorio-item">
-        <h4>Faturamento por Tipo de Placa</h4>
-    """
-    for item in relatorio_financeiro['faturamento_tipo']:
-        html += f"""
-        <p><strong>{item['Tipo_Placa']}:</strong> R$ {item['faturamento']:,.2f}</p>
-        """
-    html += "</div>"
-
-    html += """
-    <div class="relatorio-item">
-        <h4>Top 10 Clientes</h4>
-    """
-    for item in relatorio_financeiro['top_clientes']:
-        html += f"""
-        <p><strong>{item['Cliente_Locacao']}:</strong> R$ {item['faturamento']:,.2f}</p>
-        """
-    html += "</div>"
-
-    return html
-
-def generate_regiao_html(relatorio_regiao):
-    """Gera HTML para relatório por região"""
-    if not relatorio_regiao:
-        return "<p>Nenhum dado por região disponível</p>"
-
-    html = ""
-    for item in relatorio_regiao:
-        html += f"""
-        <div class="relatorio-item">
-            <h4>{item['Regiao']}</h4>
-            <p><strong>Total de Placas:</strong> {item['total_placas']}</p>
-            <p><strong>Disponíveis:</strong> {item['disponiveis']}</p>
-            <p><strong>Locadas:</strong> {item['locadas']}</p>
-            <p><strong>Reservadas:</strong> {item['reservadas']}</p>
-            <p><strong>Manutenção:</strong> {item['manutencao']}</p>
-            <p><strong>Faturamento Total:</strong> R$ {item['faturamento_total']:,.2f}</p>
-        </div>
-        """
-    return html
-
 # =============================================================================
-# ROTAS PARA EXPORTAÇÃO DE RELATÓRIOS - COMPLETAMENTE CORRIGIDAS
+# ROTAS PARA POWER BI (SUBSTITUINDO EXPORTAÇÃO EXCEL)
 # =============================================================================
 
-@app.route('/relatorios/exportar/<tipo>')
-def exportar_relatorio(tipo):
-    """Exporta relatórios específicos - CORRIGIDA"""
-    if 'user' not in session:
-        return redirect('/login')
+@app.route('/powerbi/inventario')
+def powerbi_inventario():
+    """Link para Power BI de Inventário"""
+    return redirect('https://app.powerbi.com/')
 
-    try:
-        if tipo == 'ocupacao':
-            dados = relatorio_manager.gerar_relatorio_ocupacao()
-            filename = f'relatorio_ocupacao_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
-            return exportar_relatorio_ocupacao_excel(dados, filename)
+@app.route('/powerbi/financeiro')
+def powerbi_financeiro():
+    """Link para Power BI Financeiro"""
+    return redirect('https://app.powerbi.com/')
 
-        elif tipo == 'financeiro':
-            dados = relatorio_manager.gerar_relatorio_financeiro()
-            filename = f'relatorio_financeiro_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
-            return exportar_relatorio_financeiro_excel(dados, filename)
-
-        elif tipo == 'inventario':
-            dados = relatorio_manager.gerar_relatorio_inventario()
-            filename = f'relatorio_inventario_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
-            return exportar_relatorio_inventario_excel(dados, filename)
-
-        else:
-            return "Tipo de relatório inválido", 400
-
-    except Exception as e:
-        logging.error(f"❌ Erro ao exportar relatório: {e}")
-        return f"Erro ao exportar relatório: {str(e)}", 500
-
-def exportar_relatorio_ocupacao_excel(dados, filename):
-    """Exporta relatório de ocupação para Excel - CORRIGIDA"""
-    try:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Ocupação por Região"
-
-        # Cabeçalhos
-        headers = ["Região", "Status", "Quantidade", "Faturamento (R$)"]
-        ws.append(headers)
-
-        # Dados
-        if dados:
-            for regiao, items in dados.items():
-                for item in items:
-                    ws.append([
-                        regiao,
-                        item.get('Status_Atual', ''),
-                        item.get('quantidade', 0),
-                        item.get('faturamento', 0) or 0
-                    ])
-
-        # Formatar cabeçalhos - CORREÇÃO: Usar CORES_FORMATO_ARGB
-        for col in range(1, len(headers) + 1):
-            cell = ws.cell(row=1, column=col)
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
-                                   end_color=CORES_FORMATO_ARGB['primaria'],
-                                   fill_type="solid")
-
-        # Ajustar largura das colunas
-        for column in ws.columns:
-            max_length = 0
-            column_letter = get_column_letter(column[0].column)
-            for cell in column:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
-            adjusted_width = min(max_length + 2, 50)
-            ws.column_dimensions[column_letter].width = adjusted_width
-
-        # Salvar em buffer
-        buffer = io.BytesIO()
-        wb.save(buffer)
-        buffer.seek(0)
-
-        return send_file(
-            buffer,
-            as_attachment=True,
-            download_name=filename,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-    except Exception as e:
-        logging.error(f"❌ Erro ao exportar ocupação: {e}")
-        return f"Erro ao exportar ocupação: {str(e)}", 500
-
-def exportar_relatorio_financeiro_excel(dados, filename):
-    """Exporta relatório financeiro para Excel - CORRIGIDA"""
-    try:
-        wb = Workbook()
-
-        # Aba de faturamento por região
-        if dados.get('faturamento_regiao'):
-            ws1 = wb.active
-            ws1.title = "Faturamento por Região"
-            ws1.append(["Região", "Faturamento (R$)"])
-            for item in dados['faturamento_regiao']:
-                ws1.append([
-                    item.get('Regiao', ''),
-                    item.get('faturamento', 0) or 0
-                ])
-
-            # Formatar cabeçalhos - CORREÇÃO: Usar CORES_FORMATO_ARGB
-            for col in range(1, 3):
-                cell = ws1.cell(row=1, column=col)
-                cell.font = Font(bold=True, color="FFFFFF")
-                cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
-                                       end_color=CORES_FORMATO_ARGB['primaria'],
-                                       fill_type="solid")
-
-        # Aba de faturamento por tipo
-        if dados.get('faturamento_tipo'):
-            ws2 = wb.create_sheet("Faturamento por Tipo")
-            ws2.append(["Tipo de Placa", "Faturamento (R$)"])
-            for item in dados['faturamento_tipo']:
-                ws2.append([
-                    item.get('Tipo_Placa', ''),
-                    item.get('faturamento', 0) or 0
-                ])
-
-            # Formatar cabeçalhos - CORREÇÃO: Usar CORES_FORMATO_ARGB
-            for col in range(1, 3):
-                cell = ws2.cell(row=1, column=col)
-                cell.font = Font(bold=True, color="FFFFFF")
-                cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
-                                       end_color=CORES_FORMATO_ARGB['primaria'],
-                                       fill_type="solid")
-
-        # Aba de top clientes
-        if dados.get('top_clientes'):
-            ws3 = wb.create_sheet("Top Clientes")
-            ws3.append(["Cliente", "Faturamento (R$)"])
-            for item in dados['top_clientes']:
-                ws3.append([
-                    item.get('Cliente_Locacao', ''),
-                    item.get('faturamento', 0) or 0
-                ])
-
-            # Formatar cabeçalhos - CORREÇÃO: Usar CORES_FORMATO_ARGB
-            for col in range(1, 3):
-                cell = ws3.cell(row=1, column=col)
-                cell.font = Font(bold=True, color="FFFFFF")
-                cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
-                                       end_color=CORES_FORMATO_ARGB['primaria'],
-                                       fill_type="solid")
-
-        # Ajustar largura das colunas em todas as abas
-        for ws in wb.worksheets:
-            for column in ws.columns:
-                max_length = 0
-                column_letter = get_column_letter(column[0].column)
-                for cell in column:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = min(max_length + 2, 50)
-                ws.column_dimensions[column_letter].width = adjusted_width
-
-        # Salvar em buffer
-        buffer = io.BytesIO()
-        wb.save(buffer)
-        buffer.seek(0)
-
-        return send_file(
-            buffer,
-            as_attachment=True,
-            download_name=filename,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-    except Exception as e:
-        logging.error(f"❌ Erro ao exportar financeiro: {e}")
-        return f"Erro ao exportar financeiro: {str(e)}", 500
-
-def exportar_relatorio_inventario_excel(dados, filename):
-    """Exporta relatório de inventário para Excel - CORRIGIDA"""
-    try:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Inventário Completo"
-
-        headers = ["Código", "Endereço", "Região", "Tipo", "Status", "Cliente", "Valor Mensal (R$)", "Data Cadastro"]
-        ws.append(headers)
-
-        if dados:
-            for item in dados:
-                ws.append([
-                    item.get('Codigo_Ativo', ''),
-                    item.get('Endereco', ''),
-                    item.get('Regiao', ''),
-                    item.get('Tipo_Placa', ''),
-                    item.get('Status_Atual', ''),
-                    item.get('Cliente_Locacao', '') or "Sem locação",
-                    item.get('Valor_Mensal', 0),
-                    item.get('Data_Cadastro', '')
-                ])
-
-        # Formatar cabeçalhos - CORREÇÃO: Usar CORES_FORMATO_ARGB
-        for col in range(1, len(headers) + 1):
-            cell = ws.cell(row=1, column=col)
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
-                                   end_color=CORES_FORMATO_ARGB['primaria'],
-                                   fill_type="solid")
-
-        # Ajustar largura das colunas
-        for column in ws.columns:
-            max_length = 0
-            column_letter = get_column_letter(column[0].column)
-            for cell in column:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
-            adjusted_width = min(max_length + 2, 50)
-            ws.column_dimensions[column_letter].width = adjusted_width
-
-        # Salvar em buffer
-        buffer = io.BytesIO()
-        wb.save(buffer)
-        buffer.seek(0)
-
-        return send_file(
-            buffer,
-            as_attachment=True,
-            download_name=filename,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-    except Exception as e:
-        logging.error(f"❌ Erro ao exportar inventário: {e}")
-        return f"Erro ao exportar inventário: {str(e)}", 500
+@app.route('/powerbi/reservas')
+def powerbi_reservas():
+    """Link para Power BI de Reservas"""
+    return redirect('https://app.powerbi.com/')
 
 # =============================================================================
-# MÓDULO DE EXPORTAÇÃO DE DADOS (COMPLETAMENTE CORRIGIDO)
+# MÓDULO DE EXPORTAÇÃO DE DADOS (ATUALIZADO COM LINKS)
 # =============================================================================
 
 @app.route('/exportar_dados')
 def exportar_dados():
-    """Página de exportação de dados - CORRIGIDA"""
+    """Página de exportação de dados - ATUALIZADA COM LINKS"""
     if 'user' not in session:
         return redirect('/login')
 
@@ -3956,8 +4753,9 @@ def exportar_dados():
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: {CORES_FORMATO['claro']};
+            background: linear-gradient(135deg, {CORES_FORMATO['claro']} 0%, #E3F2FD 100%);
             color: {CORES_FORMATO['texto']};
+            min-height: 100vh;
         }}
         .header {{
             background: {CORES_FORMATO['branco']};
@@ -4025,7 +4823,7 @@ def exportar_dados():
         .nav-btn:hover {{
             background: {CORES_FORMATO['secundaria']};
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(26, 54, 93, 0.2);
+            box-shadow: 0 4px 12px rgba(0, 168, 232, 0.2);
         }}
         .nav-btn.active {{
             background: {CORES_FORMATO['destaque']};
@@ -4051,17 +4849,22 @@ def exportar_dados():
             margin-top: 30px;
         }}
         .export-card {{
-            background: {CORES_FORMATO['claro']};
+            background: linear-gradient(135deg, {CORES_FORMATO['claro']}, {CORES_FORMATO['branco']});
             padding: 25px;
             border-radius: 10px;
             text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            transition: transform 0.3s;
+        }}
+        .export-card:hover {{
+            transform: translateY(-5px);
         }}
         .export-card h3 {{
             color: {CORES_FORMATO['primaria']};
             margin-bottom: 15px;
         }}
-        .btn-exportar {{
-            background: {CORES_FORMATO['sucesso']};
+        .export-link {{
+            background: linear-gradient(135deg, {CORES_FORMATO['sucesso']}, {CORES_FORMATO['info']});
             color: {CORES_FORMATO['branco']};
             padding: 12px 24px;
             border: none;
@@ -4072,10 +4875,44 @@ def exportar_dados():
             transition: all 0.3s;
             text-decoration: none;
             display: inline-block;
+            box-shadow: 0 4px 10px rgba(78, 205, 196, 0.3);
         }}
-        .btn-exportar:hover {{
-            background: {CORES_FORMATO['info']};
+        .export-link:hover {{
             transform: translateY(-2px);
+            box-shadow: 0 6px 15px rgba(78, 205, 196, 0.4);
+        }}
+        .powerbi-links {{
+            margin-top: 40px;
+            padding: 25px;
+            background: linear-gradient(135deg, {CORES_FORMATO['claro']}, #E3F2FD);
+            border-radius: 10px;
+            border: 1px solid {CORES_FORMATO['info']};
+        }}
+        .powerbi-links h3 {{
+            color: {CORES_FORMATO['primaria']};
+            margin-bottom: 20px;
+            text-align: center;
+        }}
+        .powerbi-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }}
+        .powerbi-link-item {{
+            background: {CORES_FORMATO['branco']};
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }}
+        .powerbi-link-item a {{
+            color: {CORES_FORMATO['primaria']};
+            text-decoration: none;
+            font-weight: 600;
+        }}
+        .powerbi-link-item a:hover {{
+            color: {CORES_FORMATO['secundaria']};
         }}
     </style>
 </head>
@@ -4093,39 +4930,72 @@ def exportar_dados():
     <div class="container">
         <div class="navigation">
             <a href="/inventario" class="nav-btn">📋 Inventário</a>
-            <a href="/relatorios" class="nav-btn">📊 Relatórios</a>
+            <a href="/relatorios" class="nav-btn">📊 Power BI</a>
             <a href="/comercial" class="nav-btn">💼 Comercial</a>
             <a href="/contratos" class="nav-btn">📑 Contratos</a>
+            <a href="/reservas_bisemana" class="nav-btn">📅 Reservas Bi-Semana</a>
             <a href="/exportar_dados" class="nav-btn active">📥 Exportar Dados</a>
         </div>
 
         <div class="content">
-            <h2 class="section-title">📥 Exportar Dados</h2>
+            <h2 class="section-title">📥 Exportar Dados e Links Úteis</h2>
 
             <div class="export-options">
                 <div class="export-card">
                     <h3>📋 Exportar Inventário</h3>
                     <p>Exportar todas as placas do inventário em formato Excel</p>
-                    <a href="/exportar/inventario" class="btn-exportar">📥 Exportar Excel</a>
+                    <a href="/exportar/inventario" class="export-link">📥 Baixar Excel</a>
                 </div>
 
                 <div class="export-card">
                     <h3>👥 Exportar Clientes</h3>
                     <p>Exportar lista de clientes em formato Excel</p>
-                    <a href="/exportar/clientes" class="btn-exportar">📥 Exportar Excel</a>
+                    <a href="/exportar/clientes" class="export-link">📥 Baixar Excel</a>
                 </div>
 
                 <div class="export-card">
                     <h3>📑 Exportar Contratos</h3>
                     <p>Exportar lista de contratos em formato Excel</p>
-                    <a href="/exportar/contratos" class="btn-exportar">📥 Exportar Excel</a>
+                    <a href="/exportar/contratos" class="export-link">📥 Baixar Excel</a>
                 </div>
 
                 <div class="export-card">
-                    <h3>📊 Exportar Relatórios</h3>
-                    <p>Exportar relatórios completos em Excel</p>
-                    <a href="/relatorios" class="btn-exportar">📊 Ver Relatórios</a>
+                    <h3>📅 Exportar Reservas Bi-Semana</h3>
+                    <p>Exportar reservas por período bi-semanal</p>
+                    <a href="/exportar/reservas_bisemana" class="export-link">📥 Baixar Excel</a>
                 </div>
+            </div>
+
+            <div class="powerbi-links">
+                <h3>🔗 Links para Dashboards Power BI</h3>
+                <div class="powerbi-grid">
+                    <div class="powerbi-link-item">
+                        <a href="/powerbi/inventario" target="_blank">📊 Dashboard Inventário</a>
+                        <p><small>Análise completa do inventário</small></p>
+                    </div>
+                    <div class="powerbi-link-item">
+                        <a href="/powerbi/financeiro" target="_blank">💰 Dashboard Financeiro</a>
+                        <p><small>Faturamento e despesas</small></p>
+                    </div>
+                    <div class="powerbi-link-item">
+                        <a href="/powerbi/reservas" target="_blank">📅 Dashboard Reservas</a>
+                        <p><small>Análise de ocupação por período</small></p>
+                    </div>
+                    <div class="powerbi-link-item">
+                        <a href="https://app.powerbi.com/" target="_blank">🌐 Power BI Service</a>
+                        <p><small>Acessar todos os dashboards</small></p>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top: 30px; padding: 20px; background: {CORES_FORMATO['claro']}; border-radius: 8px;">
+                <h4>📝 Notas de Exportação:</h4>
+                <ul>
+                    <li>Os arquivos Excel são gerados em tempo real com os dados atuais</li>
+                    <li>Para dashboards interativos, use os links do Power BI</li>
+                    <li>Os links do Power BI podem ser personalizados para seus relatórios específicos</li>
+                    <li>Contate o administrador para configurar novos dashboards</li>
+                </ul>
             </div>
         </div>
     </div>
@@ -4133,9 +5003,13 @@ def exportar_dados():
 </html>
 '''
 
+# =============================================================================
+# FUNÇÕES DE EXPORTAÇÃO MANTIDAS PARA COMPATIBILIDADE
+# =============================================================================
+
 @app.route('/exportar/inventario')
 def exportar_inventario():
-    """Exporta o inventário para Excel - CORRIGIDA"""
+    """Exporta o inventário para Excel - MANTIDA"""
     if 'user' not in session:
         return redirect('/login')
 
@@ -4170,7 +5044,7 @@ def exportar_inventario():
                 placa['Data_Cadastro']
             ])
 
-        # Formatação - CORREÇÃO: Usar CORES_FORMATO_ARGB
+        # Formatação
         for cell in ws[1]:
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
@@ -4208,7 +5082,7 @@ def exportar_inventario():
 
 @app.route('/exportar/clientes')
 def exportar_clientes():
-    """Exporta a lista de clientes para Excel - CORRIGIDA"""
+    """Exporta a lista de clientes para Excel - MANTIDA"""
     if 'user' not in session:
         return redirect('/login')
 
@@ -4240,7 +5114,7 @@ def exportar_clientes():
                 cliente['created_at']
             ])
 
-        # Formatação - CORREÇÃO: Usar CORES_FORMATO_ARGB
+        # Formatação
         for cell in ws[1]:
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
@@ -4278,7 +5152,7 @@ def exportar_clientes():
 
 @app.route('/exportar/contratos')
 def exportar_contratos():
-    """Exporta a lista de contratos para Excel - CORRIGIDA"""
+    """Exporta a lista de contratos para Excel - MANTIDA"""
     if 'user' not in session:
         return redirect('/login')
 
@@ -4323,7 +5197,7 @@ def exportar_contratos():
                 contrato['created_at']
             ])
 
-        # Formatação - CORREÇÃO: Usar CORES_FORMATO_ARGB
+        # Formatação
         for cell in ws[1]:
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
@@ -4358,6 +5232,87 @@ def exportar_contratos():
     except Exception as e:
         logging.error(f"❌ Erro ao exportar contratos: {e}")
         return f"Erro ao exportar contratos: {str(e)}", 500
+
+@app.route('/exportar/reservas_bisemana')
+def exportar_reservas_bisemana():
+    """Exporta as reservas bi-semanais para Excel - MANTIDA"""
+    if 'user' not in session:
+        return redirect('/login')
+
+    try:
+        db = DatabaseConnection()
+        reservas = db.execute_query("""
+            SELECT rb.*, p.Codigo_Ativo, p.Endereco, p.Regiao, p.Tipo_Placa,
+                   c.Nome_Fantasia as cliente_nome
+            FROM reservas_bisemana rb
+            JOIN placas p ON rb.placa_id = p.id
+            JOIN clientes c ON rb.cliente_id = c.id
+            ORDER BY rb.ano DESC, rb.bisemana DESC, rb.data_inicio DESC
+        """) or []
+
+        # Criar um workbook e adicionar uma planilha
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Reservas Bi-Semana"
+
+        # Cabeçalhos
+        headers = ["ID", "Período", "Bi-Semana", "Data Início", "Data Fim", "Código Placa",
+                   "Endereço", "Região", "Tipo", "Cliente", "Valor Período", "Status", "Observações"]
+        ws.append(headers)
+
+        # Adicionar dados
+        for reserva in reservas:
+            ws.append([
+                reserva['id'],
+                reserva['periodo_id'],
+                reserva['bisemana'],
+                reserva['data_inicio'],
+                reserva['data_fim'],
+                reserva['Codigo_Ativo'],
+                reserva['Endereco'],
+                reserva['Regiao'],
+                reserva['Tipo_Placa'],
+                reserva['cliente_nome'],
+                float(reserva['valor_periodo']) if reserva['valor_periodo'] else 0,
+                reserva['status'],
+                reserva['observacoes'] or ''
+            ])
+
+        # Formatação
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color=CORES_FORMATO_ARGB['primaria'],
+                                   end_color=CORES_FORMATO_ARGB['primaria'],
+                                   fill_type="solid")
+
+        # Ajustar largura das colunas
+        for column in ws.columns:
+            max_length = 0
+            column_letter = get_column_letter(column[0].column)
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+
+        # Salvar em um buffer
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=f'reservas_bisemana_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+    except Exception as e:
+        logging.error(f"❌ Erro ao exportar reservas bi-semana: {e}")
+        return f"Erro ao exportar reservas bi-semana: {str(e)}", 500
 
 # =============================================================================
 # INICIALIZAÇÃO DO SISTEMA
